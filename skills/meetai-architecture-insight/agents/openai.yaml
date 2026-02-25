@@ -1,0 +1,4 @@
+interface:
+  display_name: "MeetAI Architecture Insight"
+  short_description: "Locate MeetAI code paths quickly for safe edits"
+  default_prompt: "Use $meetai-architecture-insight to map the minimal files for this MeetAI change before coding."
