@@ -123,11 +123,61 @@ meetai quick-install --create-venv false
 meetai quick-install --install-nodejs true --nodejs-version 20.11.1 --install-java true --java-version 21 --install-go true --go-version 1.22.2
 ```
 
+## 安装
+
+> 以下步骤无需安装 Rust，直接下载编译好的 exe 即可。
+> 如果你想参与开发或从源码构建，参见下文"快速开始"。
+
+### 第一步：下载 meetai.exe
+
+前往 [GitHub Releases](https://github.com/meetai-club/meetai/releases)，下载最新版本的 `meetai.exe`。
+
+### 第二步：将 exe 放入专属目录
+
+```powershell
+# 创建目录（若已存在会跳过）
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.meetai\bin"
+
+# 将下载的 meetai.exe 移动到该目录（按实际下载路径修改）
+Move-Item "$env:USERPROFILE\Downloads\meetai.exe" "$env:USERPROFILE\.meetai\bin\meetai.exe"
+```
+
+### 第三步：将目录加入 PATH（用户级，无需管理员权限）
+
+```powershell
+[Environment]::SetEnvironmentVariable(
+    "Path",
+    "$env:USERPROFILE\.meetai\bin;" + [Environment]::GetEnvironmentVariable("Path", "User"),
+    "User"
+)
+```
+
+执行后**重新打开终端**，PATH 即永久生效。
+
+> 如果你更习惯图形界面：`Win + S` → 搜索"**编辑系统环境变量**" → 用户变量 → `Path` → 新建 → 粘贴以下路径：
+> ```
+> C:\Users\<你的用户名>\.meetai\bin
+> ```
+
+### 第四步：验证安装
+
+```powershell
+meetai --help
+```
+
+看到帮助信息即安装成功。
+
+---
+
+> **升级**：从 Releases 下载新版 exe，重新执行第二步的 `Move-Item` 覆盖旧文件即可，无需重新配置 PATH。
+
 ## 快速开始
+
+> 面向参与开发或想从源码构建的用户，需要先安装 [Rust 工具链](https://rustup.rs/)。
 
 1. 构建
 ```powershell
-cargo build
+cargo build --release
 ```
 
 2. 查看帮助
