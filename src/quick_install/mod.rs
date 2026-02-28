@@ -4,7 +4,6 @@ pub mod validator;
 
 pub use config::QuickInstallConfig;
 pub use installer::QuickInstaller;
-pub use validator::QuickInstallValidator;
 
 use crate::cli::QuickInstallArgs;
 use crate::utils::guidance::{network_diagnostic_tips, quick_install_help_commands};
@@ -22,15 +21,6 @@ pub async fn handle_quick_install(args: QuickInstallArgs) -> Result<()> {
     config.validate().with_context(|| {
         format!(
             "安装参数不合法，请检查版本号或选项值。\n{}",
-            quick_install_help_commands()
-        )
-    })?;
-
-    // 验证配置
-    let validator = QuickInstallValidator::new();
-    validator.validate(&config).with_context(|| {
-        format!(
-            "安装前环境检查未通过，请确认运行环境后重试。\n{}",
             quick_install_help_commands()
         )
     })?;

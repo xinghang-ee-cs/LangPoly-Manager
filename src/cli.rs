@@ -8,6 +8,7 @@ use std::path::PathBuf;
     long_about = None
 )]
 #[command(version = env!("CARGO_PKG_VERSION"))]
+/// MeetAI CLI 顶层参数入口。
 pub struct MeetAiCli {
     /// 启用详细输出
     #[arg(short, long, action = clap::ArgAction::SetTrue)]
@@ -19,6 +20,7 @@ pub struct MeetAiCli {
 }
 
 #[derive(Subcommand, Debug)]
+/// MeetAI 一级子命令集合。
 pub enum Commands {
     /// 统一运行时版本管理（Python / Node.js / Java / Go）
     #[command(name = "runtime")]
@@ -42,6 +44,7 @@ pub enum Commands {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+/// 受支持的运行时类型枚举。
 pub enum RuntimeType {
     Python,
     Nodejs,
@@ -50,6 +53,7 @@ pub enum RuntimeType {
 }
 
 impl RuntimeType {
+    /// 返回运行时类型的用户可读展示名。
     pub fn display_name(self) -> &'static str {
         match self {
             Self::Python => "Python",
@@ -68,6 +72,7 @@ pub struct RuntimeArgs {
 }
 
 #[derive(Subcommand, Debug)]
+/// 统一 runtime 子命令动作集合。
 pub enum RuntimeAction {
     /// 列出支持的运行时或指定运行时的已安装版本
     List {
@@ -109,6 +114,7 @@ pub struct PythonArgs {
 }
 
 #[derive(Subcommand, Debug)]
+/// Python 子命令动作集合。
 pub enum PythonAction {
     /// 列出所有已安装的 Python 版本
     List,
@@ -137,6 +143,7 @@ pub struct PipArgs {
 }
 
 #[derive(Subcommand, Debug)]
+/// Pip 子命令动作集合。
 pub enum PipAction {
     /// 安装包
     Install {
@@ -168,6 +175,7 @@ pub struct VenvArgs {
 }
 
 #[derive(Subcommand, Debug)]
+/// 虚拟环境子命令动作集合。
 pub enum VenvAction {
     /// 创建虚拟环境
     Create {

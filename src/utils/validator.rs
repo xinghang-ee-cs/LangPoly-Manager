@@ -5,7 +5,14 @@ use semver::Version;
 /// 验证器
 pub struct Validator;
 
+impl Default for Validator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Validator {
+    /// 创建输入验证器实例。
     pub fn new() -> Self {
         Self
     }

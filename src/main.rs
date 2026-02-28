@@ -13,11 +13,13 @@ use log::info;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // 初始化日志
-    env_logger::init();
-
     // 解析命令行参数
     let cli = MeetAiCli::parse();
+
+    // 初始化日志（默认 info，--verbose 提升到 debug）
+    let default_level = if cli.verbose { "debug" } else { "info" };
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(default_level))
+        .init();
 
     info!("MeetAI v{} started", env!("CARGO_PKG_VERSION"));
 

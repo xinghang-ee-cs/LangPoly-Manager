@@ -1,10 +1,9 @@
 use anyhow::{Context, Result};
 use indicatif::ProgressBar;
 use reqwest::Client;
-use std::fs;
-use std::fs::File;
-use std::io::Write;
 use std::path::Path;
+use tokio::fs;
+use tokio::io::AsyncWriteExt;
 
 /// 下载器
 pub struct Downloader {
@@ -12,13 +11,14 @@ pub struct Downloader {
 }
 
 impl Downloader {
-    pub fn new() -> Self {
+    /// 创建下载器并初始化带超时的 HTTP 客户端。
+    pub fn new() -> Result<Self> {
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(300))
             .build()
-            .expect("Failed to create HTTP client");
+            .context("Failed to create HTTP client")?;
 
-        Self { client }
+        Ok(Self { client })
     }
 
     /// 下载文件
@@ -30,7 +30,7 @@ impl Downloader {
     ) -> Result<()> {
         if let Some(parent) = dest.parent() {
             if !parent.as_os_str().is_empty() {
-                fs::create_dir_all(parent).with_context(|| {
+                fs::create_dir_all(parent).await.with_context(|| {
                     format!("Failed to create download directory: {}", parent.display())
                 })?;
             }
@@ -42,8 +42,8 @@ impl Downloader {
             dest.with_extension("part")
         };
 
-        if temp_dest.exists() {
-            fs::remove_file(&temp_dest).with_context(|| {
+        if fs::metadata(&temp_dest).await.is_ok() {
+            fs::remove_file(&temp_dest).await.with_context(|| {
                 format!(
                     "Failed to remove stale temp file before download: {}",
                     temp_dest.display()
@@ -74,7 +74,7 @@ impl Downloader {
 
         let mut downloaded = 0u64;
         let download_result: Result<()> = async {
-            let mut file = File::create(&temp_dest).with_context(|| {
+            let mut file = fs::File::create(&temp_dest).await.with_context(|| {
                 format!(
                     "Failed to create temp download file: {}",
                     temp_dest.display()
@@ -87,7 +87,7 @@ impl Downloader {
                 .await
                 .with_context(|| format!("Failed to download chunk from URL: {}", url))?
             {
-                file.write_all(&chunk).with_context(|| {
+                file.write_all(&chunk).await.with_context(|| {
                     format!(
                         "Failed to write chunk to temp file: {}",
                         temp_dest.display()
@@ -102,6 +102,7 @@ impl Downloader {
             }
 
             file.flush()
+                .await
                 .with_context(|| format!("Failed to flush temp file: {}", temp_dest.display()))?;
 
             Ok(())
@@ -109,12 +110,12 @@ impl Downloader {
         .await;
 
         if let Err(err) = download_result {
-            let _ = fs::remove_file(&temp_dest);
+            let _ = fs::remove_file(&temp_dest).await;
             return Err(err);
         }
 
-        if dest.exists() {
-            fs::remove_file(dest).with_context(|| {
+        if fs::metadata(dest).await.is_ok() {
+            fs::remove_file(dest).await.with_context(|| {
                 format!(
                     "Failed to replace existing destination file: {}",
                     dest.display()
@@ -122,7 +123,7 @@ impl Downloader {
             })?;
         }
 
-        fs::rename(&temp_dest, dest).with_context(|| {
+        fs::rename(&temp_dest, dest).await.with_context(|| {
             format!(
                 "Failed to finalize downloaded file from {} to {}",
                 temp_dest.display(),
@@ -137,6 +138,7 @@ impl Downloader {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use std::net::SocketAddr;
     use tempfile::tempdir;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -174,7 +176,7 @@ mod tests {
         let temp = tempdir()?;
         let dest = temp.path().join("python-3.12.0.exe");
 
-        let downloader = Downloader::new();
+        let downloader = Downloader::new()?;
         downloader.download(&url, &dest, None).await?;
         server_handle
             .await
@@ -198,7 +200,7 @@ mod tests {
         let dest = temp.path().join("python-3.12.1.exe");
         let temp_part = dest.with_file_name("python-3.12.1.exe.part");
 
-        let downloader = Downloader::new();
+        let downloader = Downloader::new()?;
         let err = downloader.download(&url, &dest, None).await.unwrap_err();
         server_handle
             .await
@@ -233,7 +235,7 @@ mod tests {
         let temp_part = dest.with_file_name("python-3.12.2.exe.part");
         fs::write(&temp_part, b"stale-data")?;
 
-        let downloader = Downloader::new();
+        let downloader = Downloader::new()?;
         downloader.download(&url, &dest, None).await?;
         server_handle
             .await

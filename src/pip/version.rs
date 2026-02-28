@@ -1,8 +1,8 @@
 use crate::config::Config;
-use crate::python::version::PythonVersionManager;
 use crate::utils::executor::CommandExecutor;
 use anyhow::{Context, Result};
 use semver::Version;
+use std::path::PathBuf;
 
 /// Pip 版本管理器
 pub struct PipVersionManager {
@@ -10,6 +10,7 @@ pub struct PipVersionManager {
 }
 
 impl PipVersionManager {
+    /// 创建 Pip 版本管理器，并确保运行所需目录存在。
     pub fn new() -> Result<Self> {
         let config = Config::load()?;
         config.ensure_dirs()?;
@@ -21,19 +22,7 @@ impl PipVersionManager {
 
     /// 获取当前 Pip 版本
     pub fn get_version(&self) -> Result<Version> {
-        // 获取当前 Python 版本
-        let version_manager = PythonVersionManager::new()?;
-        let current_version = version_manager
-            .get_current_version()?
-            .context("No Python version selected")?;
-
-        // 获取 Python 路径
-        let python_path = version_manager.get_python_path(&current_version)?;
-        let python_exe = if cfg!(windows) {
-            python_path.join("python.exe")
-        } else {
-            python_path.join("bin/python")
-        };
+        let python_exe = self.current_python_executable()?;
 
         // 执行 pip --version
         let output = self
@@ -51,19 +40,7 @@ impl PipVersionManager {
 
     /// 安装指定版本的 Pip
     pub async fn install(&self, version: &str) -> Result<()> {
-        // 获取当前 Python 版本
-        let version_manager = PythonVersionManager::new()?;
-        let current_version = version_manager
-            .get_current_version()?
-            .context("No Python version selected")?;
-
-        // 获取 Python 路径
-        let python_path = version_manager.get_python_path(&current_version)?;
-        let python_exe = if cfg!(windows) {
-            python_path.join("python.exe")
-        } else {
-            python_path.join("bin/python")
-        };
+        let python_exe = self.current_python_executable()?;
 
         // 使用 pip 安装指定版本
         let pip_spec = format!("pip=={}", version);
@@ -76,19 +53,7 @@ impl PipVersionManager {
 
     /// 升级 Pip
     pub async fn upgrade(&self) -> Result<()> {
-        // 获取当前 Python 版本
-        let version_manager = PythonVersionManager::new()?;
-        let current_version = version_manager
-            .get_current_version()?
-            .context("No Python version selected")?;
-
-        // 获取 Python 路径
-        let python_path = version_manager.get_python_path(&current_version)?;
-        let python_exe = if cfg!(windows) {
-            python_path.join("python.exe")
-        } else {
-            python_path.join("bin/python")
-        };
+        let python_exe = self.current_python_executable()?;
 
         // 升级 pip
         self.executor
@@ -96,5 +61,9 @@ impl PipVersionManager {
             .await?;
 
         Ok(())
+    }
+
+    fn current_python_executable(&self) -> Result<PathBuf> {
+        super::resolve_current_python_executable("No Python version selected")
     }
 }

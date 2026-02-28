@@ -37,8 +37,10 @@ impl QuickInstallConfig {
             validator.validate_pip_version(&args.pip_version)?;
         }
 
-        // 验证虚拟环境名称
-        validator.validate_package_name(&args.venv_name)?;
+        // 仅在创建虚拟环境时验证名称
+        if args.create_venv {
+            validator.validate_package_name(&args.venv_name)?;
+        }
 
         // 验证 Node.js 版本
         if args.install_nodejs {
@@ -141,6 +143,50 @@ mod tests {
         let temp = tempdir()?;
         let config = QuickInstallConfig::from_args(make_args(false, temp.path().to_path_buf()))?;
         assert!(!config.create_venv);
+        Ok(())
+    }
+
+    #[test]
+    fn from_args_allows_invalid_venv_name_when_create_venv_false() -> Result<()> {
+        let temp = tempdir()?;
+        let config = QuickInstallConfig::from_args(QuickInstallArgs {
+            python_version: "latest".to_string(),
+            pip_version: "latest".to_string(),
+            venv_name: "bad name".to_string(),
+            create_venv: false,
+            target_dir: temp.path().to_path_buf(),
+            install_nodejs: false,
+            nodejs_version: "latest".to_string(),
+            install_java: false,
+            java_version: "latest".to_string(),
+            install_go: false,
+            go_version: "latest".to_string(),
+        })?;
+        assert_eq!(config.venv_name, "bad name");
+        Ok(())
+    }
+
+    #[test]
+    fn from_args_rejects_invalid_venv_name_when_create_venv_true() -> Result<()> {
+        let temp = tempdir()?;
+        let err = QuickInstallConfig::from_args(QuickInstallArgs {
+            python_version: "latest".to_string(),
+            pip_version: "latest".to_string(),
+            venv_name: "bad name".to_string(),
+            create_venv: true,
+            target_dir: temp.path().to_path_buf(),
+            install_nodejs: false,
+            nodejs_version: "latest".to_string(),
+            install_java: false,
+            java_version: "latest".to_string(),
+            install_go: false,
+            go_version: "latest".to_string(),
+        })
+        .expect_err("invalid venv name should be rejected when create_venv=true");
+        assert!(
+            err.to_string().contains("包名格式不正确"),
+            "unexpected error: {err:#}"
+        );
         Ok(())
     }
 

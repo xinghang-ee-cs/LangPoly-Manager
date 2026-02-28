@@ -3,7 +3,7 @@ use crate::python::version::PythonVersionManager;
 use crate::utils::executor::CommandExecutor;
 use anyhow::{Context, Result};
 use std::fs;
-use std::path::PathBuf;
+use std::path::Path;
 
 /// 虚拟环境管理器
 pub struct VenvManager {
@@ -12,6 +12,7 @@ pub struct VenvManager {
 }
 
 impl VenvManager {
+    /// 创建虚拟环境管理器，并确保相关目录已初始化。
     pub fn new() -> Result<Self> {
         let config = Config::load()?;
         config.ensure_dirs()?;
@@ -23,20 +24,11 @@ impl VenvManager {
     }
 
     /// 创建虚拟环境
-    pub async fn create(&self, name: &str, target_dir: &PathBuf) -> Result<()> {
-        // 获取当前 Python 版本
+    pub async fn create(&self, name: &str, target_dir: &Path) -> Result<()> {
         let version_manager = PythonVersionManager::new()?;
-        let current_version = version_manager
-            .get_current_version()?
-            .context("还没有选择 Python 版本，请先执行: meetai runtime use python <version>")?;
-
-        // 获取 Python 路径
-        let python_path = version_manager.get_python_path(&current_version)?;
-        let python_exe = if cfg!(windows) {
-            python_path.join("python.exe")
-        } else {
-            python_path.join("bin/python")
-        };
+        let python_exe = version_manager.current_python_executable(
+            "还没有选择 Python 版本，请先执行: meetai runtime use python <version>",
+        )?;
 
         // 创建虚拟环境
         let venv_path = self.config.venv_dir.join(name);
@@ -126,11 +118,7 @@ impl VenvManager {
     }
 
     /// 创建激活脚本
-    async fn create_activate_scripts(
-        &self,
-        _venv_path: &PathBuf,
-        target_dir: &PathBuf,
-    ) -> Result<()> {
+    async fn create_activate_scripts(&self, _venv_path: &Path, target_dir: &Path) -> Result<()> {
         if cfg!(windows) {
             // Windows PowerShell 激活脚本
             let ps_script = r#"

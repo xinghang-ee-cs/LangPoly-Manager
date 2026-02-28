@@ -6,7 +6,14 @@ use tokio::process::Command as TokioCommand;
 /// 命令执行器
 pub struct CommandExecutor;
 
+impl Default for CommandExecutor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CommandExecutor {
+    /// 创建命令执行器。
     pub fn new() -> Self {
         Self
     }
@@ -50,6 +57,34 @@ impl CommandExecutor {
         let output = Command::new(program)
             .args(args)
             .output()
+            .with_context(|| format!("Failed to execute command: {}", command_display))?;
+
+        if !output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!(
+                "Command failed: {}\nstatus: {}\nstdout: {}\nstderr: {}",
+                command_display,
+                output.status,
+                if stdout.is_empty() {
+                    "<empty>"
+                } else {
+                    &stdout
+                },
+                stderr.trim()
+            );
+        }
+
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    }
+
+    /// 异步执行程序并返回输出
+    pub async fn execute_with_output_async(&self, program: &Path, args: &[&str]) -> Result<String> {
+        let command_display = Self::format_command(program, args);
+        let output = TokioCommand::new(program)
+            .args(args)
+            .output()
+            .await
             .with_context(|| format!("Failed to execute command: {}", command_display))?;
 
         if !output.status.success() {
@@ -121,6 +156,27 @@ mod tests {
 
         let err = executor
             .execute_with_output(program, &args)
+            .expect_err("command should fail in this test");
+
+        let message = err.to_string();
+        assert!(
+            message.contains("Command failed:"),
+            "error should include command prefix, got: {message}"
+        );
+        assert!(
+            message.contains("status:"),
+            "error should include status, got: {message}"
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_with_output_async_failure_includes_command_context() {
+        let (program, args) = failing_command();
+        let executor = CommandExecutor::new();
+
+        let err = executor
+            .execute_with_output_async(program, &args)
+            .await
             .expect_err("command should fail in this test");
 
         let message = err.to_string();

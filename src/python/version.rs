@@ -64,6 +64,7 @@ pub struct PythonVersionManager {
 }
 
 impl PythonVersionManager {
+    /// 创建 Python 版本管理器，并确保安装/缓存目录已初始化。
     pub fn new() -> Result<Self> {
         let config = Config::load()?;
         config.ensure_dirs()?;
@@ -154,6 +155,25 @@ impl PythonVersionManager {
             })?;
 
         Ok(target.path.clone())
+    }
+
+    /// 获取当前选中 Python 的可执行文件路径，并校验文件存在性。
+    pub fn current_python_executable(
+        &self,
+        missing_selection_message: &'static str,
+    ) -> Result<PathBuf> {
+        let current_version = self
+            .get_current_version()?
+            .context(missing_selection_message)?;
+        let python_path = self.get_python_path(&current_version)?;
+        let python_exe = Self::python_executable_in_dir(&python_path);
+        if !python_exe.exists() {
+            anyhow::bail!(
+                "当前已选 Python 的可执行文件不存在：{}。请尝试重新安装或切换版本：meetai python install <version> / meetai runtime use python <version>",
+                python_exe.display()
+            );
+        }
+        Ok(python_exe)
     }
 
     /// 获取 shim 目录路径
@@ -420,6 +440,7 @@ Write-Output 'added'}}",
 #[cfg(test)]
 mod tests {
     use super::PythonVersionManager;
+    use std::path::PathBuf;
 
     #[test]
     fn parse_python_version_output_supports_trimmed_stdout() {
@@ -431,5 +452,16 @@ mod tests {
     fn parse_python_version_output_rejects_non_standard_prefix() {
         let parsed = PythonVersionManager::parse_python_version_output("CPython 3.14.3");
         assert!(parsed.is_none());
+    }
+
+    #[test]
+    fn python_executable_in_dir_uses_platform_specific_location() {
+        let install_dir = PathBuf::from("python-3.13.2");
+        let python_exe = PythonVersionManager::python_executable_in_dir(&install_dir);
+        if cfg!(windows) {
+            assert!(python_exe.ends_with("python.exe"));
+        } else {
+            assert!(python_exe.ends_with("bin/python"));
+        }
     }
 }

@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use indicatif::ProgressBar;
 use log::warn;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::config::Config;
 use crate::pip::version::PipVersionManager;
@@ -36,12 +36,12 @@ trait PipVersionOps: Send + Sync {
 
 #[async_trait]
 trait VenvManagerOps: Send + Sync {
-    async fn create(&self, name: &str, target_dir: &PathBuf) -> Result<()>;
+    async fn create(&self, name: &str, target_dir: &Path) -> Result<()>;
 }
 
 #[async_trait]
 trait QuickInstallValidatorOps: Send + Sync {
-    async fn verify_installation(&self, config: &QuickInstallConfig) -> Result<bool>;
+    async fn verify_installation(&self, config: &QuickInstallConfig) -> Result<()>;
 }
 
 struct PythonInstallerAdapter {
@@ -111,7 +111,7 @@ struct VenvManagerAdapter {
 
 #[async_trait]
 impl VenvManagerOps for VenvManagerAdapter {
-    async fn create(&self, name: &str, target_dir: &PathBuf) -> Result<()> {
+    async fn create(&self, name: &str, target_dir: &Path) -> Result<()> {
         self.inner.create(name, target_dir).await
     }
 }
@@ -122,7 +122,7 @@ struct QuickInstallValidatorAdapter {
 
 #[async_trait]
 impl QuickInstallValidatorOps for QuickInstallValidatorAdapter {
-    async fn verify_installation(&self, config: &QuickInstallConfig) -> Result<bool> {
+    async fn verify_installation(&self, config: &QuickInstallConfig) -> Result<()> {
         self.inner.verify_installation(config).await
     }
 }
@@ -137,6 +137,7 @@ pub struct QuickInstaller {
 }
 
 impl QuickInstaller {
+    /// 创建一键安装器并装配依赖组件。
     pub fn new() -> Result<Self> {
         let config = Config::load()?;
         config.ensure_dirs()?;
@@ -554,7 +555,7 @@ mod tests {
 
     #[async_trait]
     impl VenvManagerOps for MockVenvManager {
-        async fn create(&self, name: &str, _target_dir: &PathBuf) -> Result<()> {
+        async fn create(&self, name: &str, _target_dir: &Path) -> Result<()> {
             self.calls
                 .lock()
                 .expect("lock call log")
@@ -570,12 +571,12 @@ mod tests {
 
     #[async_trait]
     impl QuickInstallValidatorOps for MockValidator {
-        async fn verify_installation(&self, _config: &QuickInstallConfig) -> Result<bool> {
+        async fn verify_installation(&self, _config: &QuickInstallConfig) -> Result<()> {
             self.calls
                 .lock()
                 .expect("lock call log")
                 .push("validator_verify".to_string());
-            Ok(true)
+            Ok(())
         }
     }
 

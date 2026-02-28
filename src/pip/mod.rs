@@ -4,13 +4,22 @@ pub mod version;
 pub use manager::PipManager;
 
 use crate::cli::{PipAction, PipArgs};
+use crate::python::version::PythonVersionManager;
 use crate::utils::validator::Validator;
 use anyhow::Result;
+use std::path::PathBuf;
 
-fn sanitize_terminal_text(raw: &str) -> String {
+pub(super) fn sanitize_terminal_text(raw: &str) -> String {
     raw.chars()
         .map(|ch| if ch.is_control() { ' ' } else { ch })
         .collect()
+}
+
+pub(super) fn resolve_current_python_executable(
+    missing_selection_message: &'static str,
+) -> Result<PathBuf> {
+    let version_manager = PythonVersionManager::new()?;
+    version_manager.current_python_executable(missing_selection_message)
 }
 
 /// 处理 Pip 相关命令
@@ -61,4 +70,15 @@ pub async fn handle_pip_command(args: PipArgs) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sanitize_terminal_text_replaces_control_characters() {
+        let sanitized = sanitize_terminal_text("pip\nlist\t\x00ok");
+        assert_eq!(sanitized, "pip list  ok");
+    }
 }
