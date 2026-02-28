@@ -17,7 +17,11 @@ Use this skill to cut discovery time before edits.
    - `python` / `venv` -> `src/python/mod.rs`
    - `pip` -> `src/pip/mod.rs`
    - `quick-install` -> `src/quick_install/mod.rs`
-3. Load task-specific file list from:
+3. For Python behavior, decide scope before deep read:
+   - shared domain API -> `src/python/service.rs`
+   - install orchestrator -> `src/python/installer.rs`
+   - installer internals -> `src/python/installer/*.rs`
+4. Load task-specific file list from:
    - `references/file-router.md`
 
 ## Core module boundaries
@@ -28,26 +32,36 @@ Use this skill to cut discovery time before edits.
   - `src/pip/`
   - `src/runtime/`
   - `src/quick_install/`
+- Keep Python command and runtime command aligned via:
+  - `src/python/service.rs`
+  - `src/python/mod.rs` (`handle_python_use_path_setup`)
 - Keep shared capabilities in `src/utils/`.
 - Keep persistent path/layout decisions in `src/config.rs`.
 
 ## Architectural invariants
 
 - Treat `PythonInstaller` as the single source of truth for Python `latest` resolution and download fallback behavior.
-- Keep quick-install aligned with runtime behavior for Python install/switch flows.
+- Keep `runtime`/`python` CLI Python behavior aligned by reusing `PythonService` and shared PATH guidance flow.
+- Keep quick-install validation layered:
+  - parameter/option validation in `src/quick_install/config.rs`
+  - post-install verification in `src/quick_install/validator.rs`
 - Keep app data rooted at `.meetai` near executable path per `Config::app_home_dir`.
 - Keep user guidance and diagnostics centralized in `src/utils/guidance.rs`.
 - Keep progress styles centralized in `src/utils/progress.rs`.
 - Keep command execution and download plumbing centralized in:
   - `src/utils/executor.rs`
   - `src/utils/downloader.rs`
+- Keep Pip current-Python resolution centralized in:
+  - `src/pip/mod.rs` (`resolve_current_python_executable`)
 
 ## Edit workflow
 
 1. Pick scenario from `references/file-router.md`.
 2. Read only listed files.
 3. Edit in the lowest-level module that owns behavior.
-4. Confirm no duplicated logic is introduced across `runtime` and `quick-install`.
+4. Confirm no duplicated logic is introduced across:
+   - `runtime` and `python` (`python use`/PATH flow)
+   - quick-install config validation and post-install verification
 5. Validate with:
    - `cargo fmt --check`
    - `cargo test --locked`
@@ -56,7 +70,9 @@ Use this skill to cut discovery time before edits.
 ## Search shortcuts
 
 - Find command handling: `rg -n "handle_.*command|match args.action" src`
-- Find Python install flow: `rg -n "install\\(|resolve_latest|get_download_sources|download_installer" src/python`
+- Find Python service and shared use flow: `rg -n "PythonService|handle_python_use_path_setup|detect_use_path_status|ensure_shims_in_path" src/python src/runtime`
+- Find Python install flow: `rg -n "install\\(|resolve_latest|get_download_sources|download_installer|verify_installation|copy_or_adopt" src/python`
 - Find quick-install flow: `rg -n "install_python|install_pip|verify_installation|build_step_failure_message" src/quick_install`
+- Find quick-install validation layering: `rg -n "from_args|config\\.validate|verify_installation" src/quick_install`
+- Find Pip executable resolution and commands: `rg -n "resolve_current_python_executable|get_python_exe|current_python_executable" src/pip`
 - Find shared guidance/progress usage: `rg -n "network_diagnostic_tips|quick_install_help_commands|print_python_path_guidance|moon_bar_style|moon_spinner_style" src`
-

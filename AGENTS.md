@@ -6,6 +6,7 @@ A skill is a set of local instructions to follow that is stored in a `SKILL.md` 
 
 ### Available skills
 - meetai-architecture-insight: Project-local architecture and file-routing insight for this repository. Use when modifying features, fixing bugs, refactoring modules, or planning code changes with minimal discovery cost. (file: d:/technology/test/rust/test/python-manager/skills/meetai-architecture-insight/SKILL.md)
+- meetai-rust-code-inspection: Project-local 7-step Rust code inspection and quality workflow adapted from ai-reading for this repository. Use when the user asks for comprehensive/complete checks of changed code (e.g. “全面检查”, “完整检查”, “改动后检查”, “提交前检查”, “全量巡检”) or when running naming/comment/quality/architecture/testing/documentation/commit checks in sequence. (file: d:/technology/test/rust/test/python-manager/skills/meetai-rust-code-inspection/SKILL.md)
 
 ### How to use skills
 - Trigger rules: If the user names a skill (with `$SkillName` or plain text) OR the task clearly matches the skill description, you must use that skill for that turn.
