@@ -47,10 +47,10 @@ impl Config {
         }
 
         let content =
-            std::fs::read_to_string(&config_path).context("Failed to read config file")?;
+            std::fs::read_to_string(&config_path).context("读取配置文件失败")?;
 
         let config: Config =
-            serde_json::from_str(&content).context("Failed to parse config file")?;
+            serde_json::from_str(&content).context("解析配置文件失败")?;
 
         Ok(config)
     }
@@ -60,13 +60,13 @@ impl Config {
         let config_path = Self::config_file_path();
         let config_dir = config_path
             .parent()
-            .context("Failed to get config directory")?;
+            .context("获取配置目录失败")?;
 
-        std::fs::create_dir_all(config_dir).context("Failed to create config directory")?;
+        std::fs::create_dir_all(config_dir).context("创建配置目录失败")?;
 
-        let content = serde_json::to_string_pretty(self).context("Failed to serialize config")?;
+        let content = serde_json::to_string_pretty(self).context("序列化配置失败")?;
 
-        std::fs::write(&config_path, content).context("Failed to write config file")?;
+        std::fs::write(&config_path, content).context("写入配置文件失败")?;
 
         Ok(())
     }
@@ -79,18 +79,18 @@ impl Config {
     /// 确保所有必要的目录存在
     pub fn ensure_dirs(&self) -> Result<()> {
         std::fs::create_dir_all(&self.python_install_dir)
-            .context("Failed to create Python install directory")?;
+            .context("创建 Python 安装目录失败")?;
 
         let shims_dir = self
             .python_install_dir
             .parent()
-            .context("Failed to derive shims directory from python install directory")?
+            .context("无法从 python_install_dir 推导 shims 目录")?
             .join("shims");
-        std::fs::create_dir_all(&shims_dir).context("Failed to create shims directory")?;
+        std::fs::create_dir_all(&shims_dir).context("创建 shims 目录失败")?;
 
-        std::fs::create_dir_all(&self.venv_dir).context("Failed to create venv directory")?;
+        std::fs::create_dir_all(&self.venv_dir).context("创建 venv 目录失败")?;
 
-        std::fs::create_dir_all(&self.cache_dir).context("Failed to create cache directory")?;
+        std::fs::create_dir_all(&self.cache_dir).context("创建 cache 目录失败")?;
 
         Ok(())
     }
@@ -132,7 +132,7 @@ impl Config {
             Ok(_) => return Ok(()),
             Err(err) => {
                 warn!(
-                    "Failed to rename legacy config directory '{}' to '{}', fallback to copy: {:#}",
+                    "旧配置目录重命名失败（{} → {}），回退为复制：{:#}",
                     legacy_dir.display(),
                     new_dir.display(),
                     err
@@ -142,7 +142,7 @@ impl Config {
 
         std::fs::create_dir_all(&new_dir).with_context(|| {
             format!(
-                "Failed to create new app directory during migration: {}",
+                "迁移时创建新应用目录失败：{}",
                 new_dir.display()
             )
         })?;
@@ -153,7 +153,7 @@ impl Config {
 
         fs_extra::dir::copy(&legacy_dir, &new_dir, &options).with_context(|| {
             format!(
-                "Failed to copy legacy app directory from '{}' to '{}'",
+                "迁移时复制旧应用目录失败（{} → {}）",
                 legacy_dir.display(),
                 new_dir.display()
             )

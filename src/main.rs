@@ -21,7 +21,7 @@ async fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(default_level))
         .init();
 
-    info!("MeetAI v{} started", env!("CARGO_PKG_VERSION"));
+    info!("MeetAI v{} 启动完成", env!("CARGO_PKG_VERSION"));
 
     // 根据子命令执行相应操作
     match cli.command {

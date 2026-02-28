@@ -16,7 +16,7 @@ impl Downloader {
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(300))
             .build()
-            .context("Failed to create HTTP client")?;
+            .context("HTTP 客户端初始化失败")?;
 
         Ok(Self { client })
     }
@@ -31,7 +31,7 @@ impl Downloader {
         if let Some(parent) = dest.parent() {
             if !parent.as_os_str().is_empty() {
                 fs::create_dir_all(parent).await.with_context(|| {
-                    format!("Failed to create download directory: {}", parent.display())
+                    format!("创建下载目录失败：{}", parent.display())
                 })?;
             }
         }
@@ -45,7 +45,7 @@ impl Downloader {
         if fs::metadata(&temp_dest).await.is_ok() {
             fs::remove_file(&temp_dest).await.with_context(|| {
                 format!(
-                    "Failed to remove stale temp file before download: {}",
+                    "清理残留临时文件失败：{}",
                     temp_dest.display()
                 )
             })?;
@@ -57,11 +57,11 @@ impl Downloader {
             .get(url)
             .send()
             .await
-            .with_context(|| format!("Failed to send request for URL: {}", url))?;
+            .with_context(|| format!("请求发送失败（URL：{}）", url))?;
 
         if !response.status().is_success() {
             anyhow::bail!(
-                "Download failed for URL {} with status: {}",
+                "下载失败（URL：{}，状态码：{}）",
                 url,
                 response.status()
             );
@@ -76,7 +76,7 @@ impl Downloader {
         let download_result: Result<()> = async {
             let mut file = fs::File::create(&temp_dest).await.with_context(|| {
                 format!(
-                    "Failed to create temp download file: {}",
+                    "创建临时下载文件失败：{}",
                     temp_dest.display()
                 )
             })?;
@@ -85,11 +85,11 @@ impl Downloader {
             while let Some(chunk) = response
                 .chunk()
                 .await
-                .with_context(|| format!("Failed to download chunk from URL: {}", url))?
+                .with_context(|| format!("数据接收中断（URL：{}）", url))?
             {
                 file.write_all(&chunk).await.with_context(|| {
                     format!(
-                        "Failed to write chunk to temp file: {}",
+                        "写入临时文件失败：{}",
                         temp_dest.display()
                     )
                 })?;
@@ -103,7 +103,7 @@ impl Downloader {
 
             file.flush()
                 .await
-                .with_context(|| format!("Failed to flush temp file: {}", temp_dest.display()))?;
+                .with_context(|| format!("临时文件刷盘失败：{}", temp_dest.display()))?;
 
             Ok(())
         }
@@ -117,7 +117,7 @@ impl Downloader {
         if fs::metadata(dest).await.is_ok() {
             fs::remove_file(dest).await.with_context(|| {
                 format!(
-                    "Failed to replace existing destination file: {}",
+                    "替换目标文件失败：{}",
                     dest.display()
                 )
             })?;
@@ -125,7 +125,7 @@ impl Downloader {
 
         fs::rename(&temp_dest, dest).await.with_context(|| {
             format!(
-                "Failed to finalize downloaded file from {} to {}",
+                "下载完成后重命名失败（{} → {}）",
                 temp_dest.display(),
                 dest.display()
             )
@@ -208,7 +208,7 @@ mod tests {
 
         assert!(
             err.to_string()
-                .contains("Failed to download chunk from URL"),
+                .contains("数据接收中断"),
             "unexpected error: {err:#}"
         );
         assert!(

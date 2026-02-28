@@ -25,13 +25,13 @@ impl CommandExecutor {
             .args(args)
             .output()
             .await
-            .with_context(|| format!("Failed to execute command: {}", command_display))?;
+            .with_context(|| format!("命令启动失败：{}", command_display))?;
 
         if !output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
             let stderr = String::from_utf8_lossy(&output.stderr);
             anyhow::bail!(
-                "Command failed: {}\nstatus: {}\nstdout: {}\nstderr: {}",
+                "命令执行失败：{}\n退出码：{}\nstdout：{}\nstderr：{}",
                 command_display,
                 output.status,
                 if stdout.is_empty() {
@@ -57,13 +57,13 @@ impl CommandExecutor {
         let output = Command::new(program)
             .args(args)
             .output()
-            .with_context(|| format!("Failed to execute command: {}", command_display))?;
+            .with_context(|| format!("命令启动失败：{}", command_display))?;
 
         if !output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
             let stderr = String::from_utf8_lossy(&output.stderr);
             anyhow::bail!(
-                "Command failed: {}\nstatus: {}\nstdout: {}\nstderr: {}",
+                "命令执行失败：{}\n退出码：{}\nstdout：{}\nstderr：{}",
                 command_display,
                 output.status,
                 if stdout.is_empty() {
@@ -85,13 +85,13 @@ impl CommandExecutor {
             .args(args)
             .output()
             .await
-            .with_context(|| format!("Failed to execute command: {}", command_display))?;
+            .with_context(|| format!("命令启动失败：{}", command_display))?;
 
         if !output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
             let stderr = String::from_utf8_lossy(&output.stderr);
             anyhow::bail!(
-                "Command failed: {}\nstatus: {}\nstdout: {}\nstderr: {}",
+                "命令执行失败：{}\n退出码：{}\nstdout：{}\nstderr：{}",
                 command_display,
                 output.status,
                 if stdout.is_empty() {
@@ -140,11 +140,11 @@ mod tests {
 
         let message = err.to_string();
         assert!(
-            message.contains("Command failed:"),
+            message.contains("命令执行失败："),
             "error should include command prefix, got: {message}"
         );
         assert!(
-            message.contains("status:"),
+            message.contains("退出码："),
             "error should include status, got: {message}"
         );
     }
@@ -160,11 +160,11 @@ mod tests {
 
         let message = err.to_string();
         assert!(
-            message.contains("Command failed:"),
+            message.contains("命令执行失败："),
             "error should include command prefix, got: {message}"
         );
         assert!(
-            message.contains("status:"),
+            message.contains("退出码："),
             "error should include status, got: {message}"
         );
     }
@@ -181,11 +181,11 @@ mod tests {
 
         let message = err.to_string();
         assert!(
-            message.contains("Command failed:"),
+            message.contains("命令执行失败："),
             "error should include command prefix, got: {message}"
         );
         assert!(
-            message.contains("status:"),
+            message.contains("退出码："),
             "error should include status, got: {message}"
         );
     }
