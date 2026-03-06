@@ -1,15 +1,7 @@
-mod cli;
-mod config;
-mod pip;
-mod python;
-mod quick_install;
-mod runtime;
-mod utils;
-
 use anyhow::Result;
 use clap::Parser;
-use cli::{Commands, MeetAiCli};
 use log::info;
+use meetai::cli::{Commands, MeetAiCli};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -26,19 +18,19 @@ async fn main() -> Result<()> {
     // 根据子命令执行相应操作
     match cli.command {
         Commands::Runtime(args) => {
-            runtime::handle_runtime_command(args).await?;
+            meetai::runtime::handle_runtime_command(args).await?;
         }
         Commands::Python(args) => {
-            python::handle_python_command(args).await?;
+            meetai::python::handle_python_command(args).await?;
         }
         Commands::Pip(args) => {
-            pip::handle_pip_command(args).await?;
+            meetai::pip::handle_pip_command(args).await?;
         }
         Commands::Venv(args) => {
-            python::handle_venv_command(args).await?;
+            meetai::python::handle_venv_command(args).await?;
         }
         Commands::QuickInstall(args) => {
-            quick_install::handle_quick_install(args).await?;
+            meetai::quick_install::handle_quick_install(args).await?;
         }
     }
 
