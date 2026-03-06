@@ -119,6 +119,9 @@ meetai quick-install
 # 关闭 venv
 meetai quick-install --create-venv false
 
+# 关闭自动激活提示（仅影响提示文案，不影响虚拟环境创建）
+meetai quick-install --auto-activate false
+
 # 多语言参数入口（Node.js / Java / Go 当前仅参数预留，实际会给出“手动安装”提示）
 meetai quick-install --install-nodejs true --nodejs-version 20.11.1 --install-java true --java-version 21 --install-go true --go-version 1.22.2
 ```
@@ -257,21 +260,29 @@ cargo run -- quick-install --create-venv false
 
 ## 配置目录
 
-默认目录（与 `meetai.exe` 同级）：
-- 配置：`<meetai.exe目录>/.meetai/config.json`
-- Python 安装目录：`<meetai.exe目录>/.meetai/python`
-- shims 目录：`<meetai.exe目录>/.meetai/shims`
-- venv 目录：`<meetai.exe目录>/.meetai/venvs`
-- 下载缓存：`<meetai.exe目录>/.meetai/cache`
+应用目录优先级：
+1. `MEETAI_HOME` 环境变量（如已设置）
+2. 用户主目录：`~/.meetai`
+3. `<meetai.exe目录>/.meetai`（仅在无法解析用户主目录时回退）
+
+在“应用目录”下的结构：
+- 配置：`<应用目录>/config.json`
+- Python 安装目录：`<应用目录>/python`
+- shims 目录：`<应用目录>/shims`
+- venv 目录：`<应用目录>/venvs`
+- 下载缓存：`<应用目录>/cache`
 
 迁移说明：
-- 如果检测到旧目录 `<meetai.exe目录>/.python-manager` 且 `<meetai.exe目录>/.meetai` 不存在，程序会自动尝试迁移。
+- 若当前应用目录不存在，程序会按顺序尝试迁移历史目录：
+  - `~/.python-manager`
+  - `<meetai.exe目录>/.python-manager`
+  - `<meetai.exe目录>/.meetai`（历史版本目录）
 
 ## 使用须知
 
 1. Python 自动安装目前仅支持 Windows；macOS / Linux 支持正在路线图中。
 2. `latest` 版本解析（适用于 `runtime install python latest` 与 `quick-install --python-version latest`）依次尝试以下来源，任意一级成功即停止：
-- 官方下载页解析 → FTP 索引解析 → 本地已安装最高版本 → 内置保底版本 `3.11.0`
+- 官方下载页解析 → FTP 索引解析 → MeetAI 已管理且可执行文件存在的最高稳定版本 → 内置保底版本 `3.11.0`
 3. Windows 下 Python 安装包采用双源下载策略，网络受限时无需手动切源：
 - 优先请求 Python 官方源
 - 官方源失败后自动回退到清华镜像源
