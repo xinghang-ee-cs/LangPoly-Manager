@@ -27,19 +27,20 @@ This skill provides the same 7-step process for the Rust CLI codebase under `src
 
 ## Entry checklist
 
-1. Required user info setup (must run before Step 1):
-   - Run `node skills/meetai-rust-code-inspection/tools/setup-user-info.js`
-   - Script should resolve name automatically (priority: `--name` > existing config > git user.name > OS username)
-   - Ask user for name only if auto resolution fails
-   - Then load `skills/meetai-rust-code-inspection/me.config.json`
-   - Confirm config contains developer identity and time fields (`name`, `date`, `datetime`)
+1. Use full 7-step scope by default:
+   - Step 1-7 are all part of the standard high-value workflow.
+   - Step 6 (documentation) and Step 7 (commit readiness) are not optional in default flow.
+   - Only skip steps if the user explicitly asks to narrow scope.
 2. Read `references/README.md` before any step.
-3. Execute one step at a time from `references/step1-*.md` to `references/step7-*.md`.
-4. If a step changes code, rerun the same step before moving to the next one.
+3. Execute one step at a time in strict order (Step 1 -> Step 7).
+4. Optional user-info setup (only when needed for review logs or commit metadata):
+   - Run `node skills/meetai-rust-code-inspection/tools/setup-user-info.js`
+   - Read `skills/meetai-rust-code-inspection/me.config.json`
+   - This setup is not required for pure technical inspection.
 
 ## Strict step gate (non-negotiable)
 
-1. Progressive loading only:
+1. Progressive loading:
    - Before Step `N`, only read:
      - `references/README.md`
      - `references/stepN-*.md`
@@ -56,9 +57,20 @@ This skill provides the same 7-step process for the Rust CLI codebase under `src
    - Still wait for user confirmation before moving forward.
 5. Violation prevention:
    - If you accidentally loaded future step files, discard them and restart from current step boundaries.
-6. Step 1 preflight hard requirement:
-   - If `me.config.json` is missing, stale (date != today), or lacks `name`/`datetime`, do not start Step 1.
-   - Re-run the setup script first.
+6. Full-flow requirement:
+   - In standard execution, include Step 1-7.
+   - Do not treat Step 6/7 as optional by default.
+7. Skip low-value checks:
+   - Do not block technical inspection on identity/date metadata.
+8. Baseline evidence:
+   - Run objective gates when feasible: `cargo fmt --check`, `cargo test --locked`, and optional `cargo clippy --locked --all-targets -- -D warnings`.
+   - Report command outcomes together with static findings in the relevant step report.
+
+## Report style
+
+1. Findings first, sorted by severity (High/Medium/Low).
+2. Each finding should include concrete file references and impact.
+3. Keep summary brief; include assumptions or residual risk only after findings.
 
 ## Step files
 

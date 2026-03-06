@@ -9,13 +9,13 @@ Before starting Step 1, complete all of the following:
 1. Understand the project shape:
    - This is a Rust CLI project (`meetai`) using `clap`, `tokio`, and `anyhow`.
    - Core code lives in `src/`, with domain modules and shared utilities.
-2. Read user identity/time (required):
-   - Run: `node skills/meetai-rust-code-inspection/tools/setup-user-info.js`
-   - Read config: `skills/meetai-rust-code-inspection/me.config.json`
-   - Required fields before Step 1: `name`, `date`, `datetime`
-3. Read all execution principles below.
-
-If setup is skipped, Step 1 must not start.
+2. Use the full 7-step inspection scope by default:
+   - Step 1-7 are all important and should be executed in order.
+   - Step 6 and Step 7 should not be skipped unless the user explicitly requests narrowing.
+3. Optional user-info setup:
+   - Run `node skills/meetai-rust-code-inspection/tools/setup-user-info.js` only when review logs or commit metadata require identity fields.
+   - Do not block technical inspection on missing `me.config.json`.
+4. Read all execution principles below.
 
 ## Execution principles
 
@@ -24,7 +24,7 @@ If setup is skipped, Step 1 must not start.
    - this `README.md`
    - `stepN-*.md`
    - Do not read `stepN+1..7` files in advance.
-3. After each step, provide a report and wait for explicit user confirmation (`继续` / `下一步` / `进入 Step X`).
+3. After each step, provide a report and wait for explicit confirmation (`继续` / `下一步` / `进入 Step X`).
 4. Without explicit confirmation, stop and do not execute next-step checks.
 5. If any file is modified during a step, rerun the same step immediately.
 6. If a step finds no issue and no file change is made:
@@ -41,6 +41,22 @@ If setup is skipped, Step 1 must not start.
 6. Keep install directory policy centralized in `src/config.rs`.
 7. When changing behavior, add/adjust tests in the same module (`#[cfg(test)]`) or in `tests/` for integration scenarios.
 
+## High-value inspection priorities
+
+1. Architecture:
+   - Boundary clarity and dependency direction (`main/cli` routing vs domain logic).
+   - Unnecessary coupling and duplicate cross-module logic.
+2. Code risk:
+   - Missing input validation before path/command/file operations.
+   - Long functions with mixed responsibilities.
+   - Risky operations (`remove_dir_all`, external command execution, PATH mutation) without guard rails.
+3. Test quality:
+   - Boundary and malicious-input cases.
+   - Realism of tests vs production flow.
+   - Runtime cost and redundant execution.
+4. Low-value checks to avoid:
+   - Blocking technical conclusions on personal identity/date metadata.
+
 ## Standard command set
 
 Use this command sequence for validation when relevant:
@@ -56,7 +72,7 @@ Use this command sequence for validation when relevant:
 ## Step X: [Step Name] Report
 
 ### Findings
-- [Issue or "No issues found"]
+- [High/Medium/Low findings first, with file evidence]
 
 ### Fix Plan
 - [What to change, or "No change needed"]
