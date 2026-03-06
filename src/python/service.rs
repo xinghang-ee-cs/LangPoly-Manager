@@ -139,11 +139,19 @@ pub(crate) async fn uninstall_python_for_surface(
     match surface {
         PythonCommandSurface::Python => {
             println!("  meetai python list                 # 查看剩余版本");
-            println!("  meetai python install latest       # 安装最新版本");
+            if cfg!(windows) {
+                println!("  meetai python install latest       # 安装最新版本");
+            } else {
+                println!("  meetai runtime list python         # 查看 MeetAI 已管理版本");
+            }
         }
         PythonCommandSurface::Runtime => {
             println!("  meetai runtime list python              # 查看剩余版本");
-            println!("  meetai runtime install python latest    # 安装最新版本");
+            if cfg!(windows) {
+                println!("  meetai runtime install python latest    # 安装最新版本");
+            } else {
+                println!("  meetai runtime use python <version>     # 切换到已管理版本");
+            }
         }
     }
     Ok(())
@@ -151,14 +159,32 @@ pub(crate) async fn uninstall_python_for_surface(
 
 fn build_install_failure_message(surface: PythonCommandSurface, version: &str) -> String {
     match surface {
-        PythonCommandSurface::Python => format!(
-            "Python 安装失败（请求版本: {}）。\n下一步你可以执行：\n  meetai python list\n  meetai python install latest",
-            version
-        ),
-        PythonCommandSurface::Runtime => format!(
-            "Python 安装失败（请求版本: {}）。\n下一步你可以执行：\n  meetai runtime list python\n  meetai runtime install python latest",
-            version
-        ),
+        PythonCommandSurface::Python => {
+            if cfg!(windows) {
+                format!(
+                    "Python 安装失败（请求版本: {}）。\n下一步你可以执行：\n  meetai python list\n  meetai python install latest",
+                    version
+                )
+            } else {
+                format!(
+                    "Python 安装失败（请求版本: {}）。\n当前平台暂不支持自动安装。\n下一步你可以执行：\n  meetai python list\n  meetai runtime list python\n  meetai runtime use python <version>",
+                    version
+                )
+            }
+        }
+        PythonCommandSurface::Runtime => {
+            if cfg!(windows) {
+                format!(
+                    "Python 安装失败（请求版本: {}）。\n下一步你可以执行：\n  meetai runtime list python\n  meetai runtime install python latest",
+                    version
+                )
+            } else {
+                format!(
+                    "Python 安装失败（请求版本: {}）。\n当前平台暂不支持自动安装。\n下一步你可以执行：\n  meetai runtime list python\n  meetai runtime use python <version>",
+                    version
+                )
+            }
+        }
     }
 }
 
@@ -329,12 +355,21 @@ mod tests {
     fn install_failure_message_uses_surface_specific_guidance() {
         let python_msg = build_install_failure_message(PythonCommandSurface::Python, "3.13.2");
         assert!(python_msg.contains("meetai python list"));
-        assert!(python_msg.contains("meetai python install latest"));
-        assert!(!python_msg.contains("meetai runtime install python latest"));
+        if cfg!(windows) {
+            assert!(python_msg.contains("meetai python install latest"));
+            assert!(!python_msg.contains("meetai runtime install python latest"));
+        } else {
+            assert!(python_msg.contains("当前平台暂不支持自动安装"));
+            assert!(python_msg.contains("meetai runtime use python <version>"));
+        }
 
         let runtime_msg = build_install_failure_message(PythonCommandSurface::Runtime, "3.13.2");
         assert!(runtime_msg.contains("meetai runtime list python"));
-        assert!(runtime_msg.contains("meetai runtime install python latest"));
+        if cfg!(windows) {
+            assert!(runtime_msg.contains("meetai runtime install python latest"));
+        } else {
+            assert!(runtime_msg.contains("meetai runtime use python <version>"));
+        }
     }
 
     #[test]

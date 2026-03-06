@@ -3,6 +3,7 @@ use crate::utils::downloader::Downloader;
 use crate::utils::executor::CommandExecutor;
 use crate::utils::guidance::network_diagnostic_tips;
 use crate::utils::progress::{moon_bar_style, moon_spinner_style};
+use crate::utils::validator::Validator;
 use anyhow::{Context, Result};
 use dirs::home_dir;
 use indicatif::ProgressBar;
@@ -74,8 +75,13 @@ impl PythonInstaller {
         })
     }
 
-    /// 安装指定版本的 Python
+    /// 安装指定版本的 Python。
+    /// `version` 支持 `latest` 或具体版本号；非 Windows 平台不执行自动下载安装，
+    /// 当 `latest` 且 MeetAI 管理目录存在已安装版本时，会回退使用其中最高稳定版本。
     pub async fn install(&self, version: &str) -> Result<String> {
+        let validator = Validator::new();
+        validator.validate_python_install_version(version)?;
+
         // 提前显示进度，避免在版本解析/本地探测阶段出现“无输出等待”
         let progress = ProgressBar::new(100);
         let install_style =
@@ -89,7 +95,23 @@ impl PythonInstaller {
             progress.set_message(format!("🐍 正在准备安装 Python {}...", version));
         }
 
-        let resolved_version = self.resolve_target_version(version).await?;
+        let resolved_version = if version == "latest" && !cfg!(windows) {
+            if let Some(local_latest) = self.get_latest_installed_python_version()? {
+                progress.println(format!(
+                    "当前平台暂不支持自动解析/安装 latest，回退到 MeetAI 已管理版本 {}。",
+                    local_latest
+                ));
+                local_latest
+            } else {
+                progress.abandon_with_message("❌ 当前平台暂不支持 latest 自动安装");
+                anyhow::bail!(
+                    "当前平台暂不支持自动下载安装 Python。可先执行 `meetai runtime list python` 查看 MeetAI 已管理版本，再执行 `meetai runtime use python <version>`。"
+                );
+            }
+        } else {
+            self.resolve_target_version(version).await?
+        };
+        validator.validate_python_selected_version(&resolved_version)?;
         progress.set_position(12);
         progress.set_message(format!(
             "🔍 正在检查本地环境（Python {}）...",
@@ -121,6 +143,17 @@ impl PythonInstaller {
             );
             println!("  meetai python list      # 查看所有已安装版本");
             return Ok(resolved_version);
+        }
+
+        if !cfg!(windows) {
+            progress.abandon_with_message(format!(
+                "❌ 当前平台暂不支持自动安装 Python {}",
+                resolved_version
+            ));
+            anyhow::bail!(
+                "当前平台暂不支持自动下载安装 Python {}。可先执行 `meetai runtime list python` 查看 MeetAI 已管理版本，再执行 `meetai runtime use python <version>`。",
+                resolved_version,
+            );
         }
 
         progress.set_position(18);
@@ -216,6 +249,8 @@ impl PythonInstaller {
 
     /// 卸载指定版本的 Python
     pub async fn uninstall(&self, version: &str) -> Result<()> {
+        Validator::new().validate_python_selected_version(version)?;
+
         if !self.is_installed(version)? {
             anyhow::bail!("Python {} 未安装", version);
         }
@@ -251,6 +286,8 @@ impl PythonInstaller {
 
     /// 检查指定版本是否已安装
     fn is_installed(&self, version: &str) -> Result<bool> {
+        Validator::new().validate_python_selected_version(version)?;
+
         let install_dir = self.get_install_dir(version);
         if !install_dir.exists() {
             return Ok(false);
@@ -299,24 +336,22 @@ impl PythonInstaller {
             },
         ];
 
-        if !Self::is_prerelease_version(version) {
-            sources.extend([
-                DownloadSource {
-                    name: "清华镜像源",
-                    url: format!(
-                        "{base}/{version}/python-{version}-{arch}.exe",
-                        base = PYTHON_TUNA_MIRROR_BASE_URL
-                    ),
-                },
-                DownloadSource {
-                    name: "清华镜像源",
-                    url: format!(
-                        "{base}/{version}/python-{version}.exe",
-                        base = PYTHON_TUNA_MIRROR_BASE_URL
-                    ),
-                },
-            ]);
-        }
+        sources.extend([
+            DownloadSource {
+                name: "清华镜像源",
+                url: format!(
+                    "{base}/{version}/python-{version}-{arch}.exe",
+                    base = PYTHON_TUNA_MIRROR_BASE_URL
+                ),
+            },
+            DownloadSource {
+                name: "清华镜像源",
+                url: format!(
+                    "{base}/{version}/python-{version}.exe",
+                    base = PYTHON_TUNA_MIRROR_BASE_URL
+                ),
+            },
+        ]);
 
         Ok(sources)
     }
@@ -519,6 +554,34 @@ mod tests {
         assert!(
             installer.is_installed(version)?,
             "existing executable should be treated as installed"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn latest_installed_version_ignores_incomplete_install_dirs() -> Result<()> {
+        let temp = tempdir()?;
+        let installer = make_installer(temp.path())?;
+
+        let incomplete_version = "3.13.2";
+        let healthy_version = "3.12.9";
+
+        // Higher version exists only as a leftover directory without executable.
+        std::fs::create_dir_all(installer.get_install_dir(incomplete_version))?;
+
+        // Lower version has a valid executable and should be selected.
+        let healthy_exe = installer.get_python_exe(healthy_version);
+        if let Some(parent) = healthy_exe.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&healthy_exe, b"stub")?;
+
+        let latest = installer.get_latest_installed_python_version()?;
+        assert_eq!(
+            latest.as_deref(),
+            Some(healthy_version),
+            "latest fallback should ignore incomplete install directories"
         );
 
         Ok(())
@@ -835,33 +898,6 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn get_download_sources_prerelease_uses_official_only() -> Result<()> {
-        let temp = tempdir()?;
-        let installer = make_installer(temp.path())?;
-
-        if cfg!(windows) {
-            let sources = installer.get_download_sources("3.15.0a6")?;
-            assert_eq!(
-                sources.len(),
-                2,
-                "pre-release should only use official source (arch + generic)"
-            );
-            assert_eq!(sources[0].name, "Python 官方源");
-            assert_eq!(sources[1].name, "Python 官方源");
-        } else {
-            let err = installer
-                .get_download_sources("3.15.0a6")
-                .expect_err("non-windows should return unsupported error");
-            assert!(
-                err.to_string().contains("当前仅支持 Windows 自动安装"),
-                "unexpected error: {err:#}"
-            );
-        }
-
-        Ok(())
-    }
-
     #[tokio::test]
     async fn download_installer_from_sources_falls_back_to_mirror() -> Result<()> {
         let temp = tempdir()?;
@@ -899,6 +935,25 @@ mod tests {
             requests,
             vec!["/official.exe".to_string(), "/mirror.exe".to_string()],
             "download order should be official first then mirror"
+        );
+
+        Ok(())
+    }
+
+    #[cfg(not(windows))]
+    #[tokio::test]
+    async fn install_latest_without_local_version_fails_fast_on_non_windows() -> Result<()> {
+        let temp = tempdir()?;
+        let installer = make_installer(temp.path())?;
+
+        let err = installer
+            .install("latest")
+            .await
+            .expect_err("non-windows latest install should fail without local versions");
+        assert!(
+            err.to_string()
+                .contains("当前平台暂不支持自动下载安装 Python"),
+            "unexpected error: {err:#}"
         );
 
         Ok(())

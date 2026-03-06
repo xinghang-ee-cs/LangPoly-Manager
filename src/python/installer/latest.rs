@@ -1,12 +1,6 @@
 use super::*;
 
 impl PythonInstaller {
-    pub(super) fn is_prerelease_version(version: &str) -> bool {
-        version
-            .chars()
-            .any(|ch| !(ch.is_ascii_digit() || ch == '.'))
-    }
-
     pub(super) async fn resolve_target_version(&self, requested_version: &str) -> Result<String> {
         if requested_version != "latest" {
             return Ok(requested_version.to_string());
@@ -61,7 +55,10 @@ impl PythonInstaller {
 
         if downloads_version.is_none() && ftp_version.is_none() {
             if let Some(ref version) = local_version {
-                println!("无法在线获取最新版本，回退到本地已安装版本: {}", version);
+                println!(
+                    "无法在线获取最新版本，回退到 MeetAI 已管理版本: {}",
+                    version
+                );
             } else {
                 println!(
                     "无法在线获取最新版本，回退到内置默认版本: {}",
@@ -255,6 +252,10 @@ impl PythonInstaller {
                 continue;
             };
             if !version.pre.is_empty() {
+                continue;
+            }
+            // 仅将“可执行文件存在”的版本视为可用版本，避免残缺目录被误判为 latest 候选。
+            if !self.get_python_exe(version_str).exists() {
                 continue;
             }
 

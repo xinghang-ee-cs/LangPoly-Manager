@@ -5,6 +5,7 @@ use crate::python::{
     install_python_for_surface, uninstall_python_for_surface, use_python_for_surface,
     PythonCommandSurface, PythonService,
 };
+use crate::utils::validator::Validator;
 
 /// 处理统一 runtime 命令
 pub async fn handle_runtime_command(args: RuntimeArgs) -> Result<()> {
@@ -38,8 +39,14 @@ fn list_runtime_versions(runtime: RuntimeType) -> Result<()> {
             if versions.is_empty() {
                 println!("当前还没有安装任何 {} 版本。", runtime.display_name());
                 println!("下一步你可以执行：");
-                println!("  meetai runtime install python latest   # 安装最新稳定版");
-                println!("  meetai python install <version>        # 安装指定版本");
+                if cfg!(windows) {
+                    println!("  meetai runtime install python latest   # 安装最新稳定版");
+                    println!("  meetai python install <version>        # 安装指定版本");
+                } else {
+                    println!("  当前平台暂不支持自动安装。");
+                    println!("  meetai runtime list python             # 查看 MeetAI 已管理版本");
+                    println!("  meetai runtime use python <version>    # 切换到已管理版本");
+                }
             } else {
                 println!(
                     "已安装的 {} 版本（共 {} 个）：",
@@ -66,6 +73,7 @@ fn list_runtime_versions(runtime: RuntimeType) -> Result<()> {
 async fn install_runtime(runtime: RuntimeType, version: &str) -> Result<()> {
     match runtime {
         RuntimeType::Python => {
+            Validator::new().validate_python_install_version(version)?;
             install_python_for_surface(version, PythonCommandSurface::Runtime).await
         }
         RuntimeType::Nodejs | RuntimeType::Java | RuntimeType::Go => {
@@ -79,7 +87,10 @@ async fn install_runtime(runtime: RuntimeType, version: &str) -> Result<()> {
 
 fn use_runtime(runtime: RuntimeType, version: &str) -> Result<()> {
     match runtime {
-        RuntimeType::Python => use_python_for_surface(version, PythonCommandSurface::Runtime),
+        RuntimeType::Python => {
+            Validator::new().validate_python_selected_version(version)?;
+            use_python_for_surface(version, PythonCommandSurface::Runtime)
+        }
         RuntimeType::Nodejs | RuntimeType::Java | RuntimeType::Go => {
             bail!(
                 "{} 的版本切换即将开放，当前版本仅支持 Python。",
@@ -92,6 +103,7 @@ fn use_runtime(runtime: RuntimeType, version: &str) -> Result<()> {
 async fn uninstall_runtime(runtime: RuntimeType, version: &str) -> Result<()> {
     match runtime {
         RuntimeType::Python => {
+            Validator::new().validate_python_selected_version(version)?;
             uninstall_python_for_surface(version, PythonCommandSurface::Runtime).await
         }
         RuntimeType::Nodejs | RuntimeType::Java | RuntimeType::Go => {
@@ -110,5 +122,48 @@ fn print_supported_runtime_matrix() {
     println!("  🔜 Java     即将开放");
     println!("  🔜 Go       即将开放");
     println!();
-    println!("  meetai runtime install python latest   # 立即安装 Python");
+    if cfg!(windows) {
+        println!("  meetai runtime install python latest   # 立即安装 Python");
+    } else {
+        println!("  meetai runtime list python             # 查看 MeetAI 已管理版本");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn runtime_install_rejects_path_like_python_version() {
+        let err = handle_runtime_command(RuntimeArgs {
+            action: RuntimeAction::Install {
+                runtime: RuntimeType::Python,
+                version: "../3.13.2".to_string(),
+            },
+        })
+        .await
+        .expect_err("path-like version should be rejected before installation");
+
+        assert!(
+            err.to_string().contains("Python 版本号格式不正确"),
+            "unexpected error: {err:#}"
+        );
+    }
+
+    #[tokio::test]
+    async fn runtime_use_rejects_latest_as_selected_version() {
+        let err = handle_runtime_command(RuntimeArgs {
+            action: RuntimeAction::Use {
+                runtime: RuntimeType::Python,
+                version: "latest".to_string(),
+            },
+        })
+        .await
+        .expect_err("latest should be rejected for runtime use");
+
+        assert!(
+            err.to_string().contains("Python 版本号格式不正确"),
+            "unexpected error: {err:#}"
+        );
+    }
 }

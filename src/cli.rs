@@ -80,7 +80,7 @@ pub enum RuntimeAction {
         #[arg(value_enum)]
         runtime: Option<RuntimeType>,
     },
-    /// 安装指定运行时版本
+    /// 安装指定运行时版本（注：Python 自动安装仅支持 Windows；macOS/Linux 仅支持使用 MeetAI 已管理版本）
     Install {
         /// 运行时类型
         #[arg(value_enum)]
@@ -118,7 +118,7 @@ pub struct PythonArgs {
 pub enum PythonAction {
     /// 列出所有已安装的 Python 版本
     List,
-    /// 安装指定版本的 Python
+    /// 安装指定版本的 Python（注：自动安装仅支持 Windows；macOS/Linux 仅支持使用 MeetAI 已管理版本）
     Install {
         /// Python 版本号
         version: String,
@@ -213,6 +213,10 @@ pub struct QuickInstallArgs {
     #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
     pub create_venv: bool,
 
+    /// 是否启用自动激活提示
+    #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+    pub auto_activate: bool,
+
     /// 安装目标目录，默认为当前目录
     #[arg(long, default_value = ".")]
     pub target_dir: PathBuf,
@@ -268,6 +272,16 @@ mod tests {
         };
 
         assert!(!args.create_venv);
+    }
+
+    #[test]
+    fn quick_install_accepts_auto_activate_false() {
+        let cli = parse_cli(&["meetai", "quick-install", "--auto-activate", "false"]);
+        let Commands::QuickInstall(args) = cli.command else {
+            panic!("expected quick-install command");
+        };
+
+        assert!(!args.auto_activate);
     }
 
     #[test]

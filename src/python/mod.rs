@@ -14,12 +14,15 @@ pub use version::PythonVersionManager;
 
 use crate::cli::{PythonAction, PythonArgs, VenvAction, VenvArgs};
 use crate::utils::progress::moon_spinner_style;
+use crate::utils::validator::Validator;
 use anyhow::Result;
 use indicatif::ProgressBar;
 use std::time::Duration;
 
 /// 处理 Python 相关命令
 pub async fn handle_python_command(args: PythonArgs) -> Result<()> {
+    let validator = Validator::new();
+
     match args.action {
         PythonAction::List => {
             let service = PythonService::new()?;
@@ -27,8 +30,14 @@ pub async fn handle_python_command(args: PythonArgs) -> Result<()> {
             if versions.is_empty() {
                 println!("当前还没有安装任何 Python 版本。");
                 println!("下一步你可以执行：");
-                println!("  meetai python install latest   # 安装最新稳定版");
-                println!("  meetai python install 3.13.2   # 安装指定版本");
+                if cfg!(windows) {
+                    println!("  meetai python install latest   # 安装最新稳定版");
+                    println!("  meetai python install 3.13.2   # 安装指定版本");
+                } else {
+                    println!("  当前平台暂不支持自动安装。");
+                    println!("  meetai runtime list python            # 查看 MeetAI 已管理版本");
+                    println!("  meetai runtime use python <version>   # 切换到已管理版本");
+                }
             } else {
                 println!("已安装的 Python 版本（共 {} 个）：", versions.len());
                 for version in versions {
@@ -40,12 +49,15 @@ pub async fn handle_python_command(args: PythonArgs) -> Result<()> {
             }
         }
         PythonAction::Install { version } => {
+            validator.validate_python_install_version(&version)?;
             install_python_for_surface(&version, PythonCommandSurface::Python).await?;
         }
         PythonAction::Use { version } => {
+            validator.validate_python_selected_version(&version)?;
             use_python_for_surface(&version, PythonCommandSurface::Python)?;
         }
         PythonAction::Uninstall { version } => {
+            validator.validate_python_selected_version(&version)?;
             uninstall_python_for_surface(&version, PythonCommandSurface::Python).await?;
         }
     }
@@ -87,4 +99,41 @@ pub async fn handle_venv_command(args: VenvArgs) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn python_install_rejects_path_like_version() {
+        let err = handle_python_command(PythonArgs {
+            action: PythonAction::Install {
+                version: r"..\3.13.2".to_string(),
+            },
+        })
+        .await
+        .expect_err("path-like version should be rejected before install");
+
+        assert!(
+            err.to_string().contains("Python 版本号格式不正确"),
+            "unexpected error: {err:#}"
+        );
+    }
+
+    #[tokio::test]
+    async fn python_uninstall_rejects_latest() {
+        let err = handle_python_command(PythonArgs {
+            action: PythonAction::Uninstall {
+                version: "latest".to_string(),
+            },
+        })
+        .await
+        .expect_err("latest should not be accepted for uninstall");
+
+        assert!(
+            err.to_string().contains("Python 版本号格式不正确"),
+            "unexpected error: {err:#}"
+        );
+    }
 }
