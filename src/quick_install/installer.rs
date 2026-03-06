@@ -350,9 +350,14 @@ impl QuickInstaller {
         config: &QuickInstallConfig,
         include_network_tips: bool,
     ) -> String {
+        let platform_guidance = if cfg!(windows) {
+            "  - meetai runtime install python <version>\n  - meetai python install <version>\n  - meetai python list".to_string()
+        } else {
+            "  - meetai runtime list python\n  - meetai runtime use python <version>".to_string()
+        };
         let mut message = format!(
-            "{}。\n参考命令：\n  - meetai quick-install --python-version {} --pip-version {}\n  - meetai runtime install python <version>\n  - meetai python list",
-            step, config.python_version, config.pip_version
+            "{}。\n参考命令：\n  - meetai quick-install --python-version {} --pip-version {}\n{}",
+            step, config.python_version, config.pip_version, platform_guidance
         );
 
         if include_network_tips {
@@ -364,14 +369,23 @@ impl QuickInstaller {
     }
 
     fn build_python_install_failure_message(version: &str, config: &QuickInstallConfig) -> String {
-        format!(
-            "Python {} 安装失败（quick-install）。\n参考命令：\n  - meetai runtime install python {}\n  - meetai python install {}\n  - meetai quick-install --python-version {}\n{}",
-            version,
-            version,
-            version,
-            config.python_version,
-            network_diagnostic_tips()
-        )
+        if cfg!(windows) {
+            format!(
+                "Python {} 安装失败（quick-install）。\n参考命令：\n  - meetai runtime install python {}\n  - meetai python install {}\n  - meetai quick-install --python-version {}\n{}",
+                version,
+                version,
+                version,
+                config.python_version,
+                network_diagnostic_tips()
+            )
+        } else {
+            format!(
+                "Python {} 安装失败（quick-install）。\n当前平台暂不支持自动安装。\n参考命令：\n  - meetai runtime list python\n  - meetai runtime use python <version>\n  - meetai quick-install --python-version {}\n{}",
+                version,
+                config.python_version,
+                network_diagnostic_tips()
+            )
+        }
     }
 
     fn build_python_switch_failure_message(installed_version: &str) -> String {
@@ -403,14 +417,27 @@ impl QuickInstaller {
 
         if config.create_venv {
             println!("  虚拟环境: {}", config.venv_name);
-            println!(
-                "  自动激活: {}",
-                if config.auto_activate {
-                    "已启用"
+            let activate_hint = if config.auto_activate {
+                if cfg!(windows) {
+                    format!(
+                        "已生成（请执行 .\\{}\\Scripts\\Activate.ps1 或 .\\{}\\Scripts\\activate.bat）",
+                        config.venv_name, config.venv_name
+                    )
                 } else {
-                    "未启用"
+                    format!("已生成（请执行 source {}/bin/activate）", config.venv_name)
                 }
-            );
+            } else if cfg!(windows) {
+                format!(
+                    "已生成（未启用自动激活提示；可手动执行 .\\{}\\Scripts\\Activate.ps1 或 .\\{}\\Scripts\\activate.bat）",
+                    config.venv_name, config.venv_name
+                )
+            } else {
+                format!(
+                    "已生成（未启用自动激活提示；可手动执行 source {}/bin/activate）",
+                    config.venv_name
+                )
+            };
+            println!("  激活脚本: {}", activate_hint);
         }
 
         if config.install_nodejs {
@@ -775,10 +802,37 @@ mod tests {
             message.contains("meetai quick-install --python-version latest"),
             "error should include quick-install retry command, got: {message}"
         );
-        assert!(
-            message.contains("meetai runtime install python"),
-            "error should include runtime fallback command, got: {message}"
-        );
+        if cfg!(windows) {
+            assert!(
+                message.contains("meetai runtime install python"),
+                "error should include runtime fallback command on Windows, got: {message}"
+            );
+            assert!(
+                message.contains("meetai python install"),
+                "error should include python install fallback command on Windows, got: {message}"
+            );
+        } else {
+            assert!(
+                message.contains("当前平台暂不支持自动安装"),
+                "error should explain platform limitation on non-Windows, got: {message}"
+            );
+            assert!(
+                message.contains("meetai runtime list python"),
+                "error should include runtime list guidance on non-Windows, got: {message}"
+            );
+            assert!(
+                message.contains("meetai runtime use python <version>"),
+                "error should include runtime use guidance on non-Windows, got: {message}"
+            );
+            assert!(
+                !message.contains("meetai runtime install python"),
+                "non-Windows guidance should not suggest unsupported runtime install, got: {message}"
+            );
+            assert!(
+                !message.contains("meetai python install"),
+                "non-Windows guidance should not suggest unsupported python install, got: {message}"
+            );
+        }
 
         let calls = calls.lock().expect("lock call log").clone();
         assert!(

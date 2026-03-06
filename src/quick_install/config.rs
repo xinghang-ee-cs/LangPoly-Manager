@@ -62,6 +62,7 @@ impl QuickInstallConfig {
             pip_version: args.pip_version,
             venv_name: args.venv_name,
             create_venv: args.create_venv,
+            auto_activate: args.auto_activate,
             target_dir: args.target_dir,
             install_nodejs: args.install_nodejs,
             nodejs_version: args.nodejs_version,
@@ -69,7 +70,6 @@ impl QuickInstallConfig {
             java_version: args.java_version,
             install_go: args.install_go,
             go_version: args.go_version,
-            auto_activate: true,
         })
     }
 
@@ -120,6 +120,7 @@ mod tests {
             pip_version: "latest".to_string(),
             venv_name: "test-env".to_string(),
             create_venv,
+            auto_activate: true,
             target_dir,
             install_nodejs: false,
             nodejs_version: "latest".to_string(),
@@ -147,6 +148,27 @@ mod tests {
     }
 
     #[test]
+    fn from_args_preserves_auto_activate_flag() -> Result<()> {
+        let temp = tempdir()?;
+        let config = QuickInstallConfig::from_args(QuickInstallArgs {
+            python_version: "latest".to_string(),
+            pip_version: "latest".to_string(),
+            venv_name: "test-env".to_string(),
+            create_venv: true,
+            auto_activate: false,
+            target_dir: temp.path().to_path_buf(),
+            install_nodejs: false,
+            nodejs_version: "latest".to_string(),
+            install_java: false,
+            java_version: "latest".to_string(),
+            install_go: false,
+            go_version: "latest".to_string(),
+        })?;
+        assert!(!config.auto_activate);
+        Ok(())
+    }
+
+    #[test]
     fn from_args_allows_invalid_venv_name_when_create_venv_false() -> Result<()> {
         let temp = tempdir()?;
         let config = QuickInstallConfig::from_args(QuickInstallArgs {
@@ -154,6 +176,7 @@ mod tests {
             pip_version: "latest".to_string(),
             venv_name: "bad name".to_string(),
             create_venv: false,
+            auto_activate: true,
             target_dir: temp.path().to_path_buf(),
             install_nodejs: false,
             nodejs_version: "latest".to_string(),
@@ -174,6 +197,7 @@ mod tests {
             pip_version: "latest".to_string(),
             venv_name: "bad name".to_string(),
             create_venv: true,
+            auto_activate: true,
             target_dir: temp.path().to_path_buf(),
             install_nodejs: false,
             nodejs_version: "latest".to_string(),
@@ -222,6 +246,7 @@ mod tests {
             pip_version: "latest".to_string(),
             venv_name: "test-env".to_string(),
             create_venv: true,
+            auto_activate: true,
             target_dir: temp.path().to_path_buf(),
             install_nodejs: true,
             nodejs_version: "20.11.1".to_string(),
