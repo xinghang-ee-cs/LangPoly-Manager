@@ -91,7 +91,15 @@ impl Config {
         Ok(())
     }
 
-    /// 解析应用主目录，优先级：`MEETAI_HOME` 环境变量 → `~/.meetai` → `<exe_dir>/.meetai` → `.meetai`（CWD）。
+    /// 从当前配置推导 MeetAI 应用主目录。
+    pub fn app_home_dir_path(&self) -> Result<PathBuf> {
+        self.python_install_dir
+            .parent()
+            .map(Path::to_path_buf)
+            .context("无法从 python_install_dir 推导 MeetAI app home 目录")
+    }
+
+    /// 解析应用主目录，优先级：`MEETAI_HOME` 环境变量 → `<exe_dir>/.meetai` → `~/.meetai` → `.meetai`（CWD）。
     fn app_home_dir() -> PathBuf {
         Self::resolve_app_home_dir(
             Self::env_app_home_dir(),
@@ -108,11 +116,11 @@ impl Config {
         if let Some(app_home) = env_home {
             return app_home;
         }
-        if let Some(home) = user_home {
-            return home.join(APP_HOME_DIR);
-        }
         if let Some(exe_dir) = exe_dir {
             return exe_dir.join(APP_HOME_DIR);
+        }
+        if let Some(home) = user_home {
+            return home.join(APP_HOME_DIR);
         }
         PathBuf::from(APP_HOME_DIR)
     }
@@ -128,6 +136,8 @@ impl Config {
 
         if let Some(home) = home_dir() {
             candidates.push(home.join(LEGACY_APP_HOME_DIR));
+            // 旧默认目录为用户主目录 ~/.meetai，新策略下需迁移到新的 app home。
+            candidates.push(home.join(APP_HOME_DIR));
         }
         if let Some(exe_dir) = Self::executable_parent_dir() {
             candidates.push(exe_dir.join(LEGACY_APP_HOME_DIR));
@@ -270,6 +280,10 @@ mod tests {
         );
         assert_eq!(
             Config::resolve_app_home_dir(None, Some(user_home.clone()), Some(exe_dir.clone())),
+            exe_dir.join(APP_HOME_DIR)
+        );
+        assert_eq!(
+            Config::resolve_app_home_dir(None, Some(user_home.clone()), None),
             user_home.join(APP_HOME_DIR)
         );
         assert_eq!(
@@ -303,6 +317,40 @@ mod tests {
                 "windows normalization should dedup slash/case variants"
             );
         }
+    }
+
+    #[test]
+    fn app_home_dir_path_uses_python_install_parent() -> Result<()> {
+        let config = Config {
+            python_install_dir: PathBuf::from("D:/meetai-home/python"),
+            venv_dir: PathBuf::from("D:/meetai-home/venvs"),
+            cache_dir: PathBuf::from("D:/meetai-home/cache"),
+            current_python_version: None,
+        };
+
+        let app_home = config.app_home_dir_path()?;
+        assert_eq!(app_home, PathBuf::from("D:/meetai-home"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn app_home_dir_path_errors_when_python_install_dir_has_no_parent() {
+        let config = Config {
+            python_install_dir: PathBuf::new(),
+            venv_dir: PathBuf::from("venvs"),
+            cache_dir: PathBuf::from("cache"),
+            current_python_version: None,
+        };
+
+        let err = config
+            .app_home_dir_path()
+            .expect_err("empty python_install_dir should fail parent derivation");
+        assert!(
+            err.to_string()
+                .contains("无法从 python_install_dir 推导 MeetAI app home 目录"),
+            "unexpected error: {err:#}"
+        );
     }
 
     #[test]
