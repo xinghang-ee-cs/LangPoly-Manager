@@ -5,6 +5,7 @@ use log::warn;
 use std::path::{Path, PathBuf};
 
 use crate::config::Config;
+use crate::node::NodeService;
 use crate::pip::version::PipVersionManager;
 use crate::python::environment::VenvManager;
 use crate::python::installer::PythonInstaller;
@@ -25,6 +26,13 @@ trait PythonVersionOps: Send + Sync {
     fn get_current_version(&self) -> Result<Option<String>>;
     fn is_shims_in_path(&self) -> Result<bool>;
     fn shims_dir(&self) -> Result<PathBuf>;
+}
+
+#[async_trait]
+trait NodeVersionOps: Send + Sync {
+    async fn install(&self, version: &str) -> Result<String>;
+    fn set_current_version(&self, version: &str) -> Result<()>;
+    fn get_current_version(&self) -> Result<Option<String>>;
 }
 
 #[async_trait]
@@ -90,6 +98,25 @@ struct PipVersionManagerAdapter {
     inner: PipVersionManager,
 }
 
+struct NodeVersionManagerAdapter {
+    inner: NodeService,
+}
+
+#[async_trait]
+impl NodeVersionOps for NodeVersionManagerAdapter {
+    async fn install(&self, version: &str) -> Result<String> {
+        self.inner.install(version).await
+    }
+
+    fn set_current_version(&self, version: &str) -> Result<()> {
+        self.inner.set_current_version(version)
+    }
+
+    fn get_current_version(&self) -> Result<Option<String>> {
+        self.inner.get_current_version()
+    }
+}
+
 #[async_trait]
 impl PipVersionOps for PipVersionManagerAdapter {
     async fn install(&self, version: &str) -> Result<()> {
@@ -130,6 +157,7 @@ impl QuickInstallValidatorOps for QuickInstallValidatorAdapter {
 /// 一键安装器
 pub struct QuickInstaller {
     python_installer: Box<dyn PythonInstallerOps>,
+    node_manager: Box<dyn NodeVersionOps>,
     pip_manager: Box<dyn PipVersionOps>,
     venv_manager: Box<dyn VenvManagerOps>,
     validator: Box<dyn QuickInstallValidatorOps>,
@@ -145,6 +173,9 @@ impl QuickInstaller {
         Ok(Self {
             python_installer: Box::new(PythonInstallerAdapter {
                 inner: PythonInstaller::new()?,
+            }),
+            node_manager: Box::new(NodeVersionManagerAdapter {
+                inner: NodeService::new()?,
             }),
             pip_manager: Box::new(PipVersionManagerAdapter {
                 inner: PipVersionManager::new()?,
@@ -164,6 +195,7 @@ impl QuickInstaller {
     #[cfg(test)]
     fn with_dependencies(
         python_installer: Box<dyn PythonInstallerOps>,
+        node_manager: Box<dyn NodeVersionOps>,
         pip_manager: Box<dyn PipVersionOps>,
         venv_manager: Box<dyn VenvManagerOps>,
         validator: Box<dyn QuickInstallValidatorOps>,
@@ -171,6 +203,7 @@ impl QuickInstaller {
     ) -> Self {
         Self {
             python_installer,
+            node_manager,
             pip_manager,
             venv_manager,
             validator,
@@ -214,7 +247,7 @@ impl QuickInstaller {
         if config.install_nodejs {
             progress.set_message("🟢 安装 Node.js...");
             self.install_nodejs(config).await.with_context(|| {
-                Self::build_step_failure_message("Node.js 安装阶段失败", config, false)
+                Self::build_step_failure_message("Node.js 安装阶段失败", config, true)
             })?;
             progress.inc(1);
         }
@@ -256,8 +289,10 @@ impl QuickInstaller {
     }
 
     async fn install_nodejs(&self, config: &QuickInstallConfig) -> Result<()> {
-        self.install_planned_runtime("Node.js", &config.nodejs_version)
-            .await
+        let installed_version = self.node_manager.install(&config.nodejs_version).await?;
+        self.node_manager.set_current_version(&installed_version)?;
+        println!("Node.js {} 已安装并切换为当前版本。", installed_version);
+        Ok(())
     }
 
     async fn install_java(&self, config: &QuickInstallConfig) -> Result<()> {
@@ -337,7 +372,6 @@ impl QuickInstaller {
             runtime_name
         );
         match runtime_name {
-            "Node.js" => println!("  https://nodejs.org"),
             "Java" => println!("  https://adoptium.net"),
             "Go" => println!("  https://go.dev/dl"),
             _ => {}
@@ -441,9 +475,17 @@ impl QuickInstaller {
         }
 
         if config.install_nodejs {
+            let node_version_display =
+                self.node_manager.get_current_version().unwrap_or_else(|_| {
+                    if config.nodejs_version == "latest" {
+                        Some("未知（安装后获取失败）".to_string())
+                    } else {
+                        Some(config.nodejs_version.clone())
+                    }
+                });
             println!(
-                "  🔜 Node.js  {}（自动安装即将开放）",
-                config.nodejs_version
+                "  Node.js 版本: {}",
+                node_version_display.unwrap_or_else(|| "未知".to_string())
             );
         }
         if config.install_java {
@@ -548,6 +590,43 @@ mod tests {
         calls: Arc<Mutex<Vec<String>>>,
     }
 
+    struct MockNodeManager {
+        calls: Arc<Mutex<Vec<String>>>,
+        current: Mutex<Option<String>>,
+    }
+
+    #[async_trait]
+    impl NodeVersionOps for MockNodeManager {
+        async fn install(&self, version: &str) -> Result<String> {
+            self.calls
+                .lock()
+                .expect("lock call log")
+                .push(format!("node_install:{version}"));
+            if version == "latest" {
+                Ok("22.0.0".to_string())
+            } else {
+                Ok(version.to_string())
+            }
+        }
+
+        fn set_current_version(&self, version: &str) -> Result<()> {
+            self.calls
+                .lock()
+                .expect("lock call log")
+                .push(format!("node_set_current:{version}"));
+            *self.current.lock().expect("lock current version") = Some(version.to_string());
+            Ok(())
+        }
+
+        fn get_current_version(&self) -> Result<Option<String>> {
+            self.calls
+                .lock()
+                .expect("lock call log")
+                .push("node_get_current".to_string());
+            Ok(self.current.lock().expect("lock current version").clone())
+        }
+    }
+
     #[async_trait]
     impl PipVersionOps for MockPipManager {
         async fn install(&self, version: &str) -> Result<()> {
@@ -630,6 +709,10 @@ mod tests {
     ) -> QuickInstaller {
         QuickInstaller::with_dependencies(
             python_installer,
+            Box::new(MockNodeManager {
+                calls: calls.clone(),
+                current: Mutex::new(None),
+            }),
             Box::new(MockPipManager {
                 calls: calls.clone(),
             }),
@@ -762,6 +845,14 @@ mod tests {
         installer.install(&config).await?;
 
         let calls = calls.lock().expect("lock call log").clone();
+        assert!(
+            calls.iter().any(|c| c == "node_install:20.11.1"),
+            "node install should be invoked, calls: {calls:?}"
+        );
+        assert!(
+            calls.iter().any(|c| c == "node_set_current:20.11.1"),
+            "node current version should be updated, calls: {calls:?}"
+        );
         assert!(
             calls.iter().any(|c| c == "validator_verify"),
             "flow should still verify installation, calls: {calls:?}"

@@ -44,7 +44,7 @@ impl QuickInstallConfig {
 
         // 验证 Node.js 版本
         if args.install_nodejs {
-            Self::validate_runtime_version("Node.js", &args.nodejs_version)?;
+            validator.validate_node_install_version(&args.nodejs_version)?;
         }
 
         // 验证 Java 版本
@@ -99,7 +99,7 @@ impl QuickInstallConfig {
         let re = Regex::new(r"^\d+(\.\d+){0,2}$")?;
         if !re.is_match(version) {
             anyhow::bail!(
-                "Invalid {} version format: {}. Expected 'latest' or numeric versions like 21 / 1.22 / 20.11.1",
+                "{} 版本号格式不正确：{}，请使用 latest 或数字版本，例如: 21 / 1.22 / 20.11.1",
                 runtime_name,
                 version
             );
@@ -263,6 +263,144 @@ mod tests {
         assert!(config.install_go);
         assert_eq!(config.go_version, "1.22.2");
 
+        Ok(())
+    }
+
+    #[test]
+    fn from_args_rejects_invalid_nodejs_version_when_install_nodejs_true() -> Result<()> {
+        let temp = tempdir()?;
+        let err = QuickInstallConfig::from_args(QuickInstallArgs {
+            python_version: "latest".to_string(),
+            pip_version: "latest".to_string(),
+            venv_name: "test-env".to_string(),
+            create_venv: true,
+            auto_activate: true,
+            target_dir: temp.path().to_path_buf(),
+            install_nodejs: true,
+            nodejs_version: "../20.11.1".to_string(),
+            install_java: false,
+            java_version: "latest".to_string(),
+            install_go: false,
+            go_version: "latest".to_string(),
+        })
+        .expect_err("invalid nodejs version should be rejected when install_nodejs=true");
+        assert!(
+            err.to_string().contains("Node.js 版本号格式不正确"),
+            "unexpected error: {err:#}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn from_args_allows_invalid_nodejs_version_when_install_nodejs_false() -> Result<()> {
+        let temp = tempdir()?;
+        let config = QuickInstallConfig::from_args(QuickInstallArgs {
+            python_version: "latest".to_string(),
+            pip_version: "latest".to_string(),
+            venv_name: "test-env".to_string(),
+            create_venv: true,
+            auto_activate: true,
+            target_dir: temp.path().to_path_buf(),
+            install_nodejs: false,
+            nodejs_version: "../20.11.1".to_string(),
+            install_java: false,
+            java_version: "latest".to_string(),
+            install_go: false,
+            go_version: "latest".to_string(),
+        })?;
+        assert_eq!(config.nodejs_version, "../20.11.1");
+        Ok(())
+    }
+
+    #[test]
+    fn from_args_rejects_invalid_java_version_when_install_java_true() -> Result<()> {
+        let temp = tempdir()?;
+        let err = QuickInstallConfig::from_args(QuickInstallArgs {
+            python_version: "latest".to_string(),
+            pip_version: "latest".to_string(),
+            venv_name: "test-env".to_string(),
+            create_venv: true,
+            auto_activate: true,
+            target_dir: temp.path().to_path_buf(),
+            install_nodejs: false,
+            nodejs_version: "latest".to_string(),
+            install_java: true,
+            java_version: "21-ea".to_string(),
+            install_go: false,
+            go_version: "latest".to_string(),
+        })
+        .expect_err("invalid java version should be rejected when install_java=true");
+        assert!(
+            err.to_string().contains("Java 版本号格式不正确"),
+            "unexpected error: {err:#}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn from_args_allows_invalid_java_version_when_install_java_false() -> Result<()> {
+        let temp = tempdir()?;
+        let config = QuickInstallConfig::from_args(QuickInstallArgs {
+            python_version: "latest".to_string(),
+            pip_version: "latest".to_string(),
+            venv_name: "test-env".to_string(),
+            create_venv: true,
+            auto_activate: true,
+            target_dir: temp.path().to_path_buf(),
+            install_nodejs: false,
+            nodejs_version: "latest".to_string(),
+            install_java: false,
+            java_version: "21-ea".to_string(),
+            install_go: false,
+            go_version: "latest".to_string(),
+        })?;
+        assert_eq!(config.java_version, "21-ea");
+        Ok(())
+    }
+
+    #[test]
+    fn from_args_rejects_invalid_go_version_when_install_go_true() -> Result<()> {
+        let temp = tempdir()?;
+        let err = QuickInstallConfig::from_args(QuickInstallArgs {
+            python_version: "latest".to_string(),
+            pip_version: "latest".to_string(),
+            venv_name: "test-env".to_string(),
+            create_venv: true,
+            auto_activate: true,
+            target_dir: temp.path().to_path_buf(),
+            install_nodejs: false,
+            nodejs_version: "latest".to_string(),
+            install_java: false,
+            java_version: "latest".to_string(),
+            install_go: true,
+            go_version: "1.22beta1".to_string(),
+        })
+        .expect_err("invalid go version should be rejected when install_go=true");
+        assert!(
+            err.to_string().contains("Go 版本号格式不正确"),
+            "unexpected error: {err:#}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn from_args_allows_invalid_go_version_when_install_go_false() -> Result<()> {
+        let temp = tempdir()?;
+        let config = QuickInstallConfig::from_args(QuickInstallArgs {
+            python_version: "latest".to_string(),
+            pip_version: "latest".to_string(),
+            venv_name: "test-env".to_string(),
+            create_venv: true,
+            auto_activate: true,
+            target_dir: temp.path().to_path_buf(),
+            install_nodejs: false,
+            nodejs_version: "latest".to_string(),
+            install_java: false,
+            java_version: "latest".to_string(),
+            install_go: false,
+            go_version: "1.22beta1".to_string(),
+        })?;
+        assert_eq!(config.go_version, "1.22beta1");
         Ok(())
     }
 }
