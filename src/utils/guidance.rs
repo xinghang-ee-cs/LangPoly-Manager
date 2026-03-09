@@ -41,3 +41,35 @@ pub fn print_python_path_guidance(shims_in_path: bool, shims_dir: &Path) {
     println!();
     println!("  配置完成后运行 python --version 确认版本。");
 }
+
+/// 根据当前 PATH 状态输出 Node.js 命令生效指引（Windows/Unix 分平台提示）。
+pub fn print_node_path_guidance(shims_in_path: bool, shims_dir: &Path) {
+    if shims_in_path {
+        println!("终端中直接运行 node --version 即可确认版本。");
+        return;
+    }
+
+    println!("还需要把 MeetAI 的 shims 目录加入 PATH 才能生效，选一种方式：");
+    println!();
+    if cfg!(windows) {
+        println!("  # 当前终端临时生效（关闭后失效）：");
+        println!("  $env:Path = \"{};$env:Path\"", shims_dir.display());
+        println!();
+        println!("  # 永久生效（重开终端后生效）：");
+        println!(
+            "  [Environment]::SetEnvironmentVariable(\"Path\", \"{};\" + [Environment]::GetEnvironmentVariable(\"Path\", \"User\"), \"User\")",
+            shims_dir.display()
+        );
+    } else {
+        println!("  # 当前终端临时生效（关闭后失效）：");
+        println!("  export PATH=\"{}:$PATH\"", shims_dir.display());
+        println!();
+        println!("  # 永久生效（添加到 ~/.bashrc 或 ~/.zshrc，重开终端后生效）：");
+        println!(
+            "  echo 'export PATH=\"{}:$PATH\"' >> ~/.bashrc",
+            shims_dir.display()
+        );
+    }
+    println!();
+    println!("  配置完成后运行 node --version 确认版本。");
+}

@@ -1,6 +1,10 @@
 use anyhow::{bail, Result};
 
 use crate::cli::{RuntimeAction, RuntimeArgs, RuntimeType};
+use crate::node::{
+    install_node_for_surface, uninstall_node_for_surface, use_node_for_surface, NodeCommandSurface,
+    NodeService,
+};
 use crate::python::{
     install_python_for_surface, uninstall_python_for_surface, use_python_for_surface,
     PythonCommandSurface, PythonService,
@@ -61,7 +65,35 @@ fn list_runtime_versions(runtime: RuntimeType) -> Result<()> {
                 println!("  meetai python list                     # Python 专项管理");
             }
         }
-        RuntimeType::Nodejs | RuntimeType::Java | RuntimeType::Go => {
+        RuntimeType::NodeJs => {
+            let service = NodeService::new()?;
+            let versions = service.list_installed()?;
+            let current = service.get_current_version()?;
+            if versions.is_empty() {
+                println!("当前还没有安装任何 {} 版本。", runtime.display_name());
+                println!("下一步你可以执行：");
+                println!("  meetai runtime install nodejs latest   # 安装最新稳定版（Windows）");
+                println!("  meetai node list                       # Node.js 专项管理");
+            } else {
+                println!(
+                    "已安装的 {} 版本（共 {} 个）：",
+                    runtime.display_name(),
+                    versions.len()
+                );
+                for version in versions {
+                    let version_text = version.to_string();
+                    if current.as_deref() == Some(version_text.as_str()) {
+                        println!("  - {}  (current)", version_text);
+                    } else {
+                        println!("  - {}", version_text);
+                    }
+                }
+                println!("下一步你可以执行：");
+                println!("  meetai runtime use nodejs <version>    # 切换版本");
+                println!("  meetai node list                       # Node.js 专项管理");
+            }
+        }
+        RuntimeType::Java | RuntimeType::Go => {
             println!("{} 的自动安装即将开放，敬请期待。", runtime.display_name());
             println!("你可以先用官方安装包手动安装，MeetAI 后续版本将支持统一管理。");
         }
@@ -76,9 +108,13 @@ async fn install_runtime(runtime: RuntimeType, version: &str) -> Result<()> {
             Validator::new().validate_python_install_version(version)?;
             install_python_for_surface(version, PythonCommandSurface::Runtime).await
         }
-        RuntimeType::Nodejs | RuntimeType::Java | RuntimeType::Go => {
+        RuntimeType::NodeJs => {
+            Validator::new().validate_node_install_version(version)?;
+            install_node_for_surface(version, NodeCommandSurface::Runtime).await
+        }
+        RuntimeType::Java | RuntimeType::Go => {
             bail!(
-                "{} 的自动安装即将开放，当前版本请手动安装。Node.js / Java / Go 支持正在积极开发中。",
+                "{} 的自动安装即将开放，当前版本请手动安装。",
                 runtime.display_name()
             )
         }
@@ -91,9 +127,13 @@ fn use_runtime(runtime: RuntimeType, version: &str) -> Result<()> {
             Validator::new().validate_python_selected_version(version)?;
             use_python_for_surface(version, PythonCommandSurface::Runtime)
         }
-        RuntimeType::Nodejs | RuntimeType::Java | RuntimeType::Go => {
+        RuntimeType::NodeJs => {
+            Validator::new().validate_node_selected_version(version)?;
+            use_node_for_surface(version, NodeCommandSurface::Runtime)
+        }
+        RuntimeType::Java | RuntimeType::Go => {
             bail!(
-                "{} 的版本切换即将开放，当前版本仅支持 Python。",
+                "{} 的版本切换即将开放，当前版本仅支持 Python / Node.js。",
                 runtime.display_name()
             )
         }
@@ -106,9 +146,13 @@ async fn uninstall_runtime(runtime: RuntimeType, version: &str) -> Result<()> {
             Validator::new().validate_python_selected_version(version)?;
             uninstall_python_for_surface(version, PythonCommandSurface::Runtime).await
         }
-        RuntimeType::Nodejs | RuntimeType::Java | RuntimeType::Go => {
+        RuntimeType::NodeJs => {
+            Validator::new().validate_node_selected_version(version)?;
+            uninstall_node_for_surface(version, NodeCommandSurface::Runtime).await
+        }
+        RuntimeType::Java | RuntimeType::Go => {
             bail!(
-                "{} 的卸载即将开放，当前版本仅支持 Python。",
+                "{} 的卸载即将开放，当前版本仅支持 Python / Node.js。",
                 runtime.display_name()
             )
         }
@@ -118,7 +162,7 @@ async fn uninstall_runtime(runtime: RuntimeType, version: &str) -> Result<()> {
 fn print_supported_runtime_matrix() {
     println!("MeetAI 运行时管理支持情况：");
     println!("  ✅ Python   已支持（安装 / 切换 / 卸载）");
-    println!("  🔜 Node.js  即将开放");
+    println!("  ✅ Node.js  已支持（Windows：安装 / 切换 / 卸载）");
     println!("  🔜 Java     即将开放");
     println!("  🔜 Go       即将开放");
     println!();
@@ -163,6 +207,91 @@ mod tests {
 
         assert!(
             err.to_string().contains("Python 版本号格式不正确"),
+            "unexpected error: {err:#}"
+        );
+    }
+
+    #[tokio::test]
+    async fn runtime_install_rejects_path_like_node_version() {
+        let err = handle_runtime_command(RuntimeArgs {
+            action: RuntimeAction::Install {
+                runtime: RuntimeType::NodeJs,
+                version: "../20.11.1".to_string(),
+            },
+        })
+        .await
+        .expect_err("path-like node version should be rejected before installation");
+
+        assert!(
+            err.to_string().contains("Node.js 版本号格式不正确"),
+            "unexpected error: {err:#}"
+        );
+    }
+
+    #[tokio::test]
+    async fn runtime_use_rejects_latest_for_node_selected_version() {
+        let err = handle_runtime_command(RuntimeArgs {
+            action: RuntimeAction::Use {
+                runtime: RuntimeType::NodeJs,
+                version: "latest".to_string(),
+            },
+        })
+        .await
+        .expect_err("latest should be rejected for node runtime use");
+
+        assert!(
+            err.to_string().contains("Node.js 版本号格式不正确"),
+            "unexpected error: {err:#}"
+        );
+    }
+
+    #[tokio::test]
+    async fn runtime_use_rejects_path_like_node_selected_version() {
+        let err = handle_runtime_command(RuntimeArgs {
+            action: RuntimeAction::Use {
+                runtime: RuntimeType::NodeJs,
+                version: "../20.11.1".to_string(),
+            },
+        })
+        .await
+        .expect_err("path-like node version should be rejected for runtime use");
+
+        assert!(
+            err.to_string().contains("Node.js 版本号格式不正确"),
+            "unexpected error: {err:#}"
+        );
+    }
+
+    #[tokio::test]
+    async fn runtime_uninstall_rejects_latest_for_node_selected_version() {
+        let err = handle_runtime_command(RuntimeArgs {
+            action: RuntimeAction::Uninstall {
+                runtime: RuntimeType::NodeJs,
+                version: "latest".to_string(),
+            },
+        })
+        .await
+        .expect_err("latest should be rejected for node runtime uninstall");
+
+        assert!(
+            err.to_string().contains("Node.js 版本号格式不正确"),
+            "unexpected error: {err:#}"
+        );
+    }
+
+    #[tokio::test]
+    async fn runtime_uninstall_rejects_path_like_node_selected_version() {
+        let err = handle_runtime_command(RuntimeArgs {
+            action: RuntimeAction::Uninstall {
+                runtime: RuntimeType::NodeJs,
+                version: "../20.11.1".to_string(),
+            },
+        })
+        .await
+        .expect_err("path-like node version should be rejected for runtime uninstall");
+
+        assert!(
+            err.to_string().contains("Node.js 版本号格式不正确"),
             "unexpected error: {err:#}"
         );
     }

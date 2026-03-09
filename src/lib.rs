@@ -7,6 +7,8 @@
 pub mod cli;
 /// Persistent app configuration and directory policy.
 pub mod config;
+/// Node.js install and version management.
+pub mod node;
 /// Pip package and version management.
 pub mod pip;
 /// Python install, version, and venv management.

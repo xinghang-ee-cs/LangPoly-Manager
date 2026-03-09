@@ -23,6 +23,9 @@ async fn main() -> Result<()> {
         Commands::Python(args) => {
             meetai::python::handle_python_command(args).await?;
         }
+        Commands::Node(args) => {
+            meetai::node::handle_node_command(args).await?;
+        }
         Commands::Pip(args) => {
             meetai::pip::handle_pip_command(args).await?;
         }

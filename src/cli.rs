@@ -30,6 +30,10 @@ pub enum Commands {
     #[command(name = "python")]
     Python(PythonArgs),
 
+    /// Node.js 版本管理
+    #[command(name = "node")]
+    Node(NodeArgs),
+
     /// Pip 包管理
     #[command(name = "pip")]
     Pip(PipArgs),
@@ -47,7 +51,8 @@ pub enum Commands {
 /// 受支持的运行时类型枚举。
 pub enum RuntimeType {
     Python,
-    Nodejs,
+    #[value(name = "nodejs", alias = "node-js")]
+    NodeJs,
     Java,
     Go,
 }
@@ -57,7 +62,7 @@ impl RuntimeType {
     pub fn display_name(self) -> &'static str {
         match self {
             Self::Python => "Python",
-            Self::Nodejs => "Node.js",
+            Self::NodeJs => "Node.js",
             Self::Java => "Java",
             Self::Go => "Go",
         }
@@ -80,7 +85,7 @@ pub enum RuntimeAction {
         #[arg(value_enum)]
         runtime: Option<RuntimeType>,
     },
-    /// 安装指定运行时版本（注：Python 自动安装仅支持 Windows；macOS/Linux 仅支持使用 MeetAI 已管理版本）
+    /// 安装指定运行时版本（注：Python / Node.js 自动安装仅支持 Windows；macOS/Linux 仅支持使用 MeetAI 已管理版本）
     Install {
         /// 运行时类型
         #[arg(value_enum)]
@@ -131,6 +136,35 @@ pub enum PythonAction {
     /// 卸载指定版本
     Uninstall {
         /// Python 版本号
+        version: String,
+    },
+}
+
+/// Node.js 版本管理参数
+#[derive(Parser, Debug)]
+pub struct NodeArgs {
+    #[command(subcommand)]
+    pub action: NodeAction,
+}
+
+#[derive(Subcommand, Debug)]
+/// Node.js 子命令动作集合。
+pub enum NodeAction {
+    /// 列出所有已安装的 Node.js 版本
+    List,
+    /// 安装指定版本的 Node.js（自动安装目前仅支持 Windows）
+    Install {
+        /// Node.js 版本号
+        version: String,
+    },
+    /// 切换全局 Node.js 版本
+    Use {
+        /// Node.js 版本号
+        version: String,
+    },
+    /// 卸载指定版本
+    Uninstall {
+        /// Node.js 版本号
         version: String,
     },
 }
@@ -221,7 +255,7 @@ pub struct QuickInstallArgs {
     #[arg(long, default_value = ".")]
     pub target_dir: PathBuf,
 
-    /// 是否安装 Node.js（当前为规划支持能力）
+    /// 是否安装 Node.js（自动安装目前仅支持 Windows）
     #[arg(long, default_value_t = false, action = clap::ArgAction::Set)]
     pub install_nodejs: bool,
 
@@ -327,5 +361,49 @@ mod tests {
 
         assert_eq!(runtime, RuntimeType::Python);
         assert_eq!(version, "3.13.2");
+    }
+
+    #[test]
+    fn runtime_install_nodejs_parses() {
+        let cli = parse_cli(&["meetai", "runtime", "install", "nodejs", "20.11.1"]);
+        let Commands::Runtime(args) = cli.command else {
+            panic!("expected runtime command");
+        };
+
+        let RuntimeAction::Install { runtime, version } = args.action else {
+            panic!("expected runtime install action");
+        };
+
+        assert_eq!(runtime, RuntimeType::NodeJs);
+        assert_eq!(version, "20.11.1");
+    }
+
+    #[test]
+    fn runtime_install_node_js_alias_parses() {
+        let cli = parse_cli(&["meetai", "runtime", "install", "node-js", "20.11.1"]);
+        let Commands::Runtime(args) = cli.command else {
+            panic!("expected runtime command");
+        };
+
+        let RuntimeAction::Install { runtime, version } = args.action else {
+            panic!("expected runtime install action");
+        };
+
+        assert_eq!(runtime, RuntimeType::NodeJs);
+        assert_eq!(version, "20.11.1");
+    }
+
+    #[test]
+    fn node_install_parses() {
+        let cli = parse_cli(&["meetai", "node", "install", "20.11.1"]);
+        let Commands::Node(args) = cli.command else {
+            panic!("expected node command");
+        };
+
+        let NodeAction::Install { version } = args.action else {
+            panic!("expected node install action");
+        };
+
+        assert_eq!(version, "20.11.1");
     }
 }

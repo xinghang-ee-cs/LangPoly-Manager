@@ -13,6 +13,11 @@ fn re_package_name() -> &'static Regex {
     RE.get_or_init(|| Regex::new(r"^[a-zA-Z0-9_-]+$").unwrap())
 }
 
+fn re_node_version() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"^\d+\.\d+\.\d+$").unwrap())
+}
+
 fn re_pip_package_name() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| Regex::new(r"^[A-Za-z0-9][A-Za-z0-9._-]*$").unwrap())
@@ -60,9 +65,24 @@ impl Validator {
         self.validate_python_version_token(version, false)
     }
 
+    /// 验证 Node.js 安装请求版本（允许 latest）。
+    pub fn validate_node_install_version(&self, version: &str) -> Result<()> {
+        self.validate_node_version_token(version, true)
+    }
+
+    /// 验证 Node.js 已安装版本选择（不允许 latest）。
+    pub fn validate_node_selected_version(&self, version: &str) -> Result<()> {
+        self.validate_node_version_token(version, false)
+    }
+
     /// 验证 Pip 版本号格式
     pub fn validate_pip_version(&self, version: &str) -> Result<()> {
-        Version::parse(version).context("Invalid pip version format")?;
+        Version::parse(version).with_context(|| {
+            format!(
+                "pip 版本号格式不正确：{}，请使用语义化版本格式，例如: 24.0.0",
+                version
+            )
+        })?;
 
         Ok(())
     }
@@ -152,6 +172,37 @@ impl Validator {
 
         Ok(())
     }
+
+    /// 内部实现：验证 Node.js 版本号 token。
+    /// `allow_latest = true` 时接受字面量 `"latest"`；否则只接受 `X.Y.Z` 格式。
+    fn validate_node_version_token(&self, version: &str, allow_latest: bool) -> Result<()> {
+        if allow_latest && version == "latest" {
+            return Ok(());
+        }
+
+        if version.chars().any(char::is_whitespace) {
+            anyhow::bail!("Node.js 版本号不能包含空白字符：{}", version);
+        }
+        if version.chars().any(char::is_control) {
+            anyhow::bail!("Node.js 版本号不能包含控制字符：{}", version);
+        }
+
+        let re = re_node_version();
+        if !re.is_match(version) {
+            if allow_latest {
+                anyhow::bail!(
+                    "Node.js 版本号格式不正确：{}，请使用 latest 或 X.Y.Z 格式，例如: latest / 20.11.1",
+                    version
+                );
+            }
+            anyhow::bail!(
+                "Node.js 版本号格式不正确：{}，请使用 X.Y.Z 格式，例如: 20.11.1",
+                version
+            );
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -225,5 +276,31 @@ mod tests {
             .validate_python_selected_version("latest")
             .is_err());
         assert!(validator.validate_python_selected_version("3.13.2").is_ok());
+    }
+
+    #[test]
+    fn node_install_version_allows_latest_and_three_segment_form() {
+        let validator = Validator::new();
+        assert!(validator.validate_node_install_version("latest").is_ok());
+        assert!(validator.validate_node_install_version("20.11.1").is_ok());
+        assert!(validator.validate_node_install_version("20.11").is_err());
+    }
+
+    #[test]
+    fn node_install_version_rejects_path_like_input() {
+        let validator = Validator::new();
+        assert!(validator
+            .validate_node_install_version("../20.11.1")
+            .is_err());
+        assert!(validator
+            .validate_node_install_version("20.11.1/../../evil")
+            .is_err());
+    }
+
+    #[test]
+    fn node_selected_version_rejects_latest() {
+        let validator = Validator::new();
+        assert!(validator.validate_node_selected_version("latest").is_err());
+        assert!(validator.validate_node_selected_version("20.11.1").is_ok());
     }
 }
