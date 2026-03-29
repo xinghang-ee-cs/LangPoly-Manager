@@ -1,10 +1,11 @@
 use crate::config::Config;
+use crate::node::project::resolve_project_version_from_nvmrc;
 use crate::node::version::NodeVersionManager;
 use crate::utils::downloader::Downloader;
 use crate::utils::guidance::network_diagnostic_tips;
+use crate::utils::http_client::build_http_client;
 use crate::utils::validator::Validator;
 use anyhow::{Context, Result};
-use reqwest::Client;
 use semver::Version;
 use serde::Deserialize;
 use std::fs;
@@ -13,18 +14,79 @@ use tokio::process::Command as TokioCommand;
 
 const NODE_DIST_INDEX_URL: &str = "https://nodejs.org/dist/index.json";
 const NODE_DIST_BASE_URL: &str = "https://nodejs.org/dist";
+const DEFAULT_AVAILABLE_VERSION_LIMIT: usize = 12;
+
+/// 可安装的 Node.js 版本信息（含 LTS 标记）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AvailableNodeVersion {
+    /// 版本号（semver 格式，如 `20.11.1`）。
+    pub version: String,
+    /// LTS 代号（如 `Iron`），非 LTS 版本为 `None`。
+    pub lts_name: Option<String>,
+}
+
+impl AvailableNodeVersion {
+    /// 判断是否为 LTS 版本。
+    pub fn is_lts(&self) -> bool {
+        self.lts_name.is_some()
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum NodeLtsMarker {
+    Flag(#[allow(dead_code)] bool),
+    Name(String),
+}
 
 #[derive(Debug, Deserialize)]
 struct NodeDistRelease {
     version: String,
     #[serde(default)]
     files: Vec<String>,
+    #[serde(default)]
+    lts: Option<NodeLtsMarker>,
+}
+
+impl NodeDistRelease {
+    fn supports_current_platform(&self) -> bool {
+        if cfg!(windows) {
+            let Ok(platform_token) = NodeInstaller::windows_platform_token() else {
+                return false;
+            };
+            let required_file_key = format!("{}-zip", platform_token);
+            self.files.iter().any(|f| f == &required_file_key)
+        } else {
+            true
+        }
+    }
+
+    fn normalized_version(&self) -> Option<String> {
+        NodeInstaller::normalize_version_token(&self.version)
+    }
+
+    fn lts_name(&self) -> Option<String> {
+        match &self.lts {
+            Some(NodeLtsMarker::Name(name)) if !name.trim().is_empty() => Some(name.clone()),
+            _ => None,
+        }
+    }
+
+    fn into_available_version(self) -> Option<AvailableNodeVersion> {
+        if !self.supports_current_platform() {
+            return None;
+        }
+
+        Some(AvailableNodeVersion {
+            version: self.normalized_version()?,
+            lts_name: self.lts_name(),
+        })
+    }
 }
 
 /// Node.js 安装器。
 pub struct NodeInstaller {
     config: Config,
-    downloader: Downloader,
 }
 
 impl NodeInstaller {
@@ -32,15 +94,22 @@ impl NodeInstaller {
     pub fn new() -> Result<Self> {
         let config = Config::load()?;
         config.ensure_dirs()?;
-        let installer = Self {
-            config,
-            downloader: Downloader::new()?,
-        };
+        let installer = Self { config };
         installer.ensure_node_dirs()?;
         Ok(installer)
     }
 
-    /// 安装指定 Node.js 版本（支持 `latest` 或具体版本号）。
+    /// 查看官方可安装的 Node.js 版本（含 LTS 标记）。
+    pub async fn list_available_versions(&self) -> Result<Vec<AvailableNodeVersion>> {
+        let body = self.fetch_dist_index_body().await?;
+        let mut versions = self.parse_available_versions_from_index_body(&body)?;
+        if versions.len() > DEFAULT_AVAILABLE_VERSION_LIMIT {
+            versions.truncate(DEFAULT_AVAILABLE_VERSION_LIMIT);
+        }
+        Ok(versions)
+    }
+
+    /// 安装指定 Node.js 版本（支持 `latest` / `newest` / `lts` / `project` 或具体版本号）。
     pub async fn install(&self, version: &str) -> Result<String> {
         Validator::new().validate_node_install_version(version)?;
 
@@ -69,15 +138,14 @@ impl NodeInstaller {
         ));
 
         let download_url = self.build_download_url(&resolved_version)?;
-        if let Err(err) = self
-            .downloader
+        let downloader = Downloader::new()?;
+        if let Err(err) = downloader
             .download(&download_url, &archive_path, None)
             .await
         {
             return Err(err.context(format!(
-                "Node.js {} 下载失败。\n{}\n可重试命令：\n  - meetai node install {}\n  - meetai runtime install nodejs {}\n{}",
+                "Node.js {} 下载失败了 😢\n\n别担心，可以试试：\n  - 重试：meetai node install {}\n  - 或者：meetai runtime install nodejs {}\n\n{}",
                 resolved_version,
-                download_url,
                 resolved_version,
                 resolved_version,
                 network_diagnostic_tips()
@@ -100,10 +168,20 @@ impl NodeInstaller {
     }
 
     async fn resolve_target_version(&self, version: &str) -> Result<String> {
-        if version != "latest" {
-            return Ok(version.to_string());
-        }
+        let requested = if version == "project" {
+            resolve_project_version_from_nvmrc()?
+        } else {
+            version.to_string()
+        };
 
+        match requested.as_str() {
+            "latest" | "newest" => self.resolve_latest_target_version().await,
+            "lts" => self.resolve_latest_lts_target_version().await,
+            _ => Ok(requested),
+        }
+    }
+
+    async fn resolve_latest_target_version(&self) -> Result<String> {
         if !cfg!(windows) {
             if let Some(local_latest) = self.get_latest_installed_version()? {
                 return Ok(local_latest);
@@ -114,16 +192,29 @@ impl NodeInstaller {
         let remote_latest = self.resolve_latest_from_remote().await.ok();
         let local_latest = self.get_latest_installed_version()?;
         Self::choose_latest_version(remote_latest, local_latest).with_context(|| {
-            "无法解析 latest 对应的 Node.js 版本，请检查网络后重试，或显式指定版本号（例如 20.11.1）"
+            "无法解析 latest/newest 对应的 Node.js 版本，请检查网络后重试，或显式指定版本号（例如 20.11.1）"
+        })
+    }
+
+    async fn resolve_latest_lts_target_version(&self) -> Result<String> {
+        self.resolve_latest_lts_from_remote().await.with_context(|| {
+            "无法解析 lts 对应的 Node.js LTS 版本，请检查网络后重试，或显式指定版本号（例如 20.11.1）"
         })
     }
 
     async fn resolve_latest_from_remote(&self) -> Result<String> {
-        let client = Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
-            .build()
-            .context("HTTP 客户端初始化失败")?;
-        let body = client
+        let body = self.fetch_dist_index_body().await?;
+        self.parse_latest_version_from_index_body(&body)
+    }
+
+    async fn resolve_latest_lts_from_remote(&self) -> Result<String> {
+        let body = self.fetch_dist_index_body().await?;
+        self.parse_latest_lts_version_from_index_body(&body)
+    }
+
+    async fn fetch_dist_index_body(&self) -> Result<String> {
+        let client = build_http_client(std::time::Duration::from_secs(30))?;
+        client
             .get(NODE_DIST_INDEX_URL)
             .send()
             .await
@@ -132,23 +223,44 @@ impl NodeInstaller {
             .context("Node.js 版本索引响应异常")?
             .text()
             .await
-            .context("读取 Node.js 版本索引失败")?;
+            .context("读取 Node.js 版本索引失败")
+    }
 
-        self.parse_latest_version_from_index_body(&body)
+    fn parse_available_versions_from_index_body(
+        &self,
+        body: &str,
+    ) -> Result<Vec<AvailableNodeVersion>> {
+        let releases: Vec<NodeDistRelease> =
+            serde_json::from_str(body).context("解析 Node.js 版本索引失败")?;
+
+        let mut versions: Vec<AvailableNodeVersion> = releases
+            .into_iter()
+            .filter_map(NodeDistRelease::into_available_version)
+            .collect();
+
+        versions.sort_by(|a, b| {
+            let left = Version::parse(&a.version).ok();
+            let right = Version::parse(&b.version).ok();
+            right.cmp(&left)
+        });
+        versions.dedup_by(|a, b| a.version == b.version);
+        Ok(versions)
     }
 
     fn parse_latest_version_from_index_body(&self, body: &str) -> Result<String> {
-        let releases: Vec<NodeDistRelease> =
-            serde_json::from_str(body).context("解析 Node.js 版本索引失败")?;
-        let required_file_key = format!("{}-zip", Self::windows_platform_token()?);
-
-        let latest = releases
+        self.parse_available_versions_from_index_body(body)?
             .into_iter()
-            .filter(|item| item.files.iter().any(|f| f == &required_file_key))
-            .filter_map(|item| Self::normalize_version_token(&item.version))
-            .max();
+            .map(|item| item.version)
+            .next()
+            .context("版本索引中未找到可用于当前平台的 Node.js 包")
+    }
 
-        latest.context("版本索引中未找到可用于当前平台的 Node.js 包")
+    fn parse_latest_lts_version_from_index_body(&self, body: &str) -> Result<String> {
+        self.parse_available_versions_from_index_body(body)?
+            .into_iter()
+            .find(|item| item.is_lts())
+            .map(|item| item.version)
+            .context("版本索引中未找到 LTS Node.js 包")
     }
 
     fn choose_latest_version(remote: Option<String>, local: Option<String>) -> Option<String> {
@@ -423,21 +535,53 @@ mod tests {
     }
 
     #[test]
-    fn parse_latest_version_from_index_body_selects_highest_with_required_file() -> Result<()> {
+    fn parse_available_versions_from_index_body_sorts_versions_and_marks_lts() -> Result<()> {
         let body = r#"
         [
-          {"version":"v22.5.0","files":["linux-x64","src"]},
-          {"version":"v20.11.1","files":["win-x64-zip","linux-x64"]},
-          {"version":"v22.3.0","files":["win-x64-zip","linux-x64"]}
+          {"version":"v20.11.1","files":["win-x64-zip"],"lts":"Iron"},
+          {"version":"v22.3.0","files":["win-x64-zip"],"lts":false},
+          {"version":"v18.20.4","files":["win-x64-zip"],"lts":"Hydrogen"}
         ]
         "#;
 
-        if cfg!(windows) {
-            let installer = NodeInstaller::new()?;
-            let latest = installer.parse_latest_version_from_index_body(body)?;
-            assert_eq!(latest, "22.3.0");
-        }
+        let installer = NodeInstaller::new()?;
+        let versions = installer.parse_available_versions_from_index_body(body)?;
+        assert_eq!(versions[0].version, "22.3.0");
+        assert!(!versions[0].is_lts());
+        assert_eq!(versions[1].version, "20.11.1");
+        assert_eq!(versions[1].lts_name.as_deref(), Some("Iron"));
+        Ok(())
+    }
 
+    #[test]
+    fn parse_latest_version_from_index_body_selects_highest_with_required_file() -> Result<()> {
+        let body = r#"
+        [
+          {"version":"v22.5.0","files":["linux-x64","src"],"lts":false},
+          {"version":"v20.11.1","files":["win-x64-zip","linux-x64"],"lts":"Iron"},
+          {"version":"v22.3.0","files":["win-x64-zip","linux-x64"],"lts":false}
+        ]
+        "#;
+
+        let installer = NodeInstaller::new()?;
+        let latest = installer.parse_latest_version_from_index_body(body)?;
+        assert_eq!(latest, "22.3.0");
+        Ok(())
+    }
+
+    #[test]
+    fn parse_latest_lts_version_from_index_body_selects_highest_lts() -> Result<()> {
+        let body = r#"
+        [
+          {"version":"v22.3.0","files":["win-x64-zip"],"lts":false},
+          {"version":"v20.11.1","files":["win-x64-zip"],"lts":"Iron"},
+          {"version":"v18.20.4","files":["win-x64-zip"],"lts":"Hydrogen"}
+        ]
+        "#;
+
+        let installer = NodeInstaller::new()?;
+        let latest_lts = installer.parse_latest_lts_version_from_index_body(body)?;
+        assert_eq!(latest_lts, "20.11.1");
         Ok(())
     }
 

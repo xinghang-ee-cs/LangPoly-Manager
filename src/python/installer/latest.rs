@@ -172,7 +172,11 @@ impl PythonInstaller {
     }
 
     pub(super) async fn fetch_latest_from_downloads_page(&self) -> Result<String> {
-        let body = reqwest::get(PYTHON_DOWNLOADS_URL)
+        let client =
+            crate::utils::http_client::build_http_client(std::time::Duration::from_secs(30))?;
+        let body = client
+            .get(PYTHON_DOWNLOADS_URL)
+            .send()
             .await
             .context("Failed to request Python downloads page")?
             .error_for_status()
@@ -185,7 +189,11 @@ impl PythonInstaller {
     }
 
     pub(super) async fn fetch_latest_downloadable_from_ftp_index(&self) -> Result<Option<String>> {
-        let body = reqwest::get(PYTHON_FTP_INDEX_URL)
+        let client =
+            crate::utils::http_client::build_http_client(std::time::Duration::from_secs(30))?;
+        let body = client
+            .get(PYTHON_FTP_INDEX_URL)
+            .send()
             .await
             .context("Failed to request Python FTP index")?
             .error_for_status()
@@ -210,9 +218,8 @@ impl PythonInstaller {
             return false;
         };
 
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(20))
-            .build();
+        let client =
+            crate::utils::http_client::build_http_client(std::time::Duration::from_secs(20));
         let Ok(client) = client else {
             return false;
         };

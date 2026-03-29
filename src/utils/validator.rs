@@ -65,14 +65,19 @@ impl Validator {
         self.validate_python_version_token(version, false)
     }
 
-    /// 验证 Node.js 安装请求版本（允许 latest）。
+    /// 验证 Node.js 安装请求版本（允许 latest / newest / lts / project）。
     pub fn validate_node_install_version(&self, version: &str) -> Result<()> {
-        self.validate_node_version_token(version, true)
+        self.validate_node_version_token(version, &["latest", "newest", "lts", "project"])
     }
 
-    /// 验证 Node.js 已安装版本选择（不允许 latest）。
+    /// 验证 Node.js 切换请求版本（允许 project）。
+    pub fn validate_node_use_version(&self, version: &str) -> Result<()> {
+        self.validate_node_version_token(version, &["project"])
+    }
+
+    /// 验证 Node.js 已安装版本选择（仅允许 X.Y.Z）。
     pub fn validate_node_selected_version(&self, version: &str) -> Result<()> {
-        self.validate_node_version_token(version, false)
+        self.validate_node_version_token(version, &[])
     }
 
     /// 验证 Pip 版本号格式
@@ -174,9 +179,12 @@ impl Validator {
     }
 
     /// 内部实现：验证 Node.js 版本号 token。
-    /// `allow_latest = true` 时接受字面量 `"latest"`；否则只接受 `X.Y.Z` 格式。
-    fn validate_node_version_token(&self, version: &str, allow_latest: bool) -> Result<()> {
-        if allow_latest && version == "latest" {
+    fn validate_node_version_token(
+        &self,
+        version: &str,
+        allowed_special_tokens: &[&str],
+    ) -> Result<()> {
+        if allowed_special_tokens.contains(&version) {
             return Ok(());
         }
 
@@ -189,15 +197,19 @@ impl Validator {
 
         let re = re_node_version();
         if !re.is_match(version) {
-            if allow_latest {
+            if allowed_special_tokens.is_empty() {
                 anyhow::bail!(
-                    "Node.js 版本号格式不正确：{}，请使用 latest 或 X.Y.Z 格式，例如: latest / 20.11.1",
+                    "Node.js 版本号格式不正确：{}，请使用 X.Y.Z 格式，例如: 20.11.1",
                     version
                 );
             }
+
+            let token_examples = allowed_special_tokens.join(" / ");
             anyhow::bail!(
-                "Node.js 版本号格式不正确：{}，请使用 X.Y.Z 格式，例如: 20.11.1",
-                version
+                "Node.js 版本号格式不正确：{}，请使用 {} 或 X.Y.Z 格式，例如: {} / 20.11.1",
+                version,
+                token_examples,
+                token_examples
             );
         }
 
@@ -279,9 +291,12 @@ mod tests {
     }
 
     #[test]
-    fn node_install_version_allows_latest_and_three_segment_form() {
+    fn node_install_version_allows_special_tokens_and_three_segment_form() {
         let validator = Validator::new();
         assert!(validator.validate_node_install_version("latest").is_ok());
+        assert!(validator.validate_node_install_version("newest").is_ok());
+        assert!(validator.validate_node_install_version("lts").is_ok());
+        assert!(validator.validate_node_install_version("project").is_ok());
         assert!(validator.validate_node_install_version("20.11.1").is_ok());
         assert!(validator.validate_node_install_version("20.11").is_err());
     }
@@ -298,9 +313,18 @@ mod tests {
     }
 
     #[test]
-    fn node_selected_version_rejects_latest() {
+    fn node_use_version_allows_project_but_rejects_latest() {
+        let validator = Validator::new();
+        assert!(validator.validate_node_use_version("project").is_ok());
+        assert!(validator.validate_node_use_version("latest").is_err());
+        assert!(validator.validate_node_use_version("20.11.1").is_ok());
+    }
+
+    #[test]
+    fn node_selected_version_rejects_special_tokens() {
         let validator = Validator::new();
         assert!(validator.validate_node_selected_version("latest").is_err());
+        assert!(validator.validate_node_selected_version("project").is_err());
         assert!(validator.validate_node_selected_version("20.11.1").is_ok());
     }
 }

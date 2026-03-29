@@ -41,7 +41,7 @@ fn list_runtime_versions(runtime: RuntimeType) -> Result<()> {
             let service = PythonService::new()?;
             let versions = service.list_installed()?;
             if versions.is_empty() {
-                println!("当前还没有安装任何 {} 版本。", runtime.display_name());
+                println!("还没有安装 {}，让我们开始吧！", runtime.display_name());
                 println!("下一步你可以执行：");
                 if cfg!(windows) {
                     println!("  meetai runtime install python latest   # 安装最新稳定版");
@@ -70,9 +70,14 @@ fn list_runtime_versions(runtime: RuntimeType) -> Result<()> {
             let versions = service.list_installed()?;
             let current = service.get_current_version()?;
             if versions.is_empty() {
-                println!("当前还没有安装任何 {} 版本。", runtime.display_name());
+                println!("还没有安装 {}，让我们开始吧！", runtime.display_name());
                 println!("下一步你可以执行：");
-                println!("  meetai runtime install nodejs latest   # 安装最新稳定版（Windows）");
+                if cfg!(windows) {
+                    println!("  meetai runtime install nodejs lts      # 安装最新 LTS");
+                } else {
+                    println!("  当前平台暂不支持自动安装。");
+                    println!("  meetai runtime use nodejs <version>    # 切换到已管理版本");
+                }
                 println!("  meetai node list                       # Node.js 专项管理");
             } else {
                 println!(
@@ -121,16 +126,20 @@ async fn install_runtime(runtime: RuntimeType, version: &str) -> Result<()> {
     }
 }
 
-fn use_runtime(runtime: RuntimeType, version: &str) -> Result<()> {
+fn validate_runtime_use_version(runtime: RuntimeType, version: &str) -> Result<()> {
     match runtime {
-        RuntimeType::Python => {
-            Validator::new().validate_python_selected_version(version)?;
-            use_python_for_surface(version, PythonCommandSurface::Runtime)
-        }
-        RuntimeType::NodeJs => {
-            Validator::new().validate_node_selected_version(version)?;
-            use_node_for_surface(version, NodeCommandSurface::Runtime)
-        }
+        RuntimeType::Python => Validator::new().validate_python_selected_version(version),
+        RuntimeType::NodeJs => Validator::new().validate_node_use_version(version),
+        RuntimeType::Java | RuntimeType::Go => Ok(()),
+    }
+}
+
+fn use_runtime(runtime: RuntimeType, version: &str) -> Result<()> {
+    validate_runtime_use_version(runtime, version)?;
+
+    match runtime {
+        RuntimeType::Python => use_python_for_surface(version, PythonCommandSurface::Runtime),
+        RuntimeType::NodeJs => use_node_for_surface(version, NodeCommandSurface::Runtime),
         RuntimeType::Java | RuntimeType::Go => {
             bail!(
                 "{} 的版本切换即将开放，当前版本仅支持 Python / Node.js。",
@@ -196,14 +205,8 @@ mod tests {
 
     #[tokio::test]
     async fn runtime_use_rejects_latest_as_selected_version() {
-        let err = handle_runtime_command(RuntimeArgs {
-            action: RuntimeAction::Use {
-                runtime: RuntimeType::Python,
-                version: "latest".to_string(),
-            },
-        })
-        .await
-        .expect_err("latest should be rejected for runtime use");
+        let err = validate_runtime_use_version(RuntimeType::Python, "latest")
+            .expect_err("latest should be rejected for runtime use");
 
         assert!(
             err.to_string().contains("Python 版本号格式不正确"),
@@ -230,14 +233,8 @@ mod tests {
 
     #[tokio::test]
     async fn runtime_use_rejects_latest_for_node_selected_version() {
-        let err = handle_runtime_command(RuntimeArgs {
-            action: RuntimeAction::Use {
-                runtime: RuntimeType::NodeJs,
-                version: "latest".to_string(),
-            },
-        })
-        .await
-        .expect_err("latest should be rejected for node runtime use");
+        let err = validate_runtime_use_version(RuntimeType::NodeJs, "latest")
+            .expect_err("latest should be rejected for node runtime use");
 
         assert!(
             err.to_string().contains("Node.js 版本号格式不正确"),
@@ -247,19 +244,19 @@ mod tests {
 
     #[tokio::test]
     async fn runtime_use_rejects_path_like_node_selected_version() {
-        let err = handle_runtime_command(RuntimeArgs {
-            action: RuntimeAction::Use {
-                runtime: RuntimeType::NodeJs,
-                version: "../20.11.1".to_string(),
-            },
-        })
-        .await
-        .expect_err("path-like node version should be rejected for runtime use");
+        let err = validate_runtime_use_version(RuntimeType::NodeJs, "../20.11.1")
+            .expect_err("path-like node version should be rejected for runtime use");
 
         assert!(
             err.to_string().contains("Node.js 版本号格式不正确"),
             "unexpected error: {err:#}"
         );
+    }
+
+    #[tokio::test]
+    async fn runtime_use_accepts_project_for_node_selected_version() {
+        validate_runtime_use_version(RuntimeType::NodeJs, "project")
+            .expect("project should be accepted for runtime-level node validation");
     }
 
     #[tokio::test]

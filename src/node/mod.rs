@@ -1,4 +1,5 @@
 pub mod installer;
+mod project;
 pub mod service;
 pub mod version;
 
@@ -44,8 +45,10 @@ pub async fn handle_node_command(args: NodeArgs) -> Result<()> {
             if versions.is_empty() {
                 println!("当前还没有安装任何 Node.js 版本。");
                 println!("下一步你可以执行：");
-                println!("  meetai node install latest   # 安装最新稳定版（Windows）");
-                println!("  meetai runtime list nodejs   # 统一入口查看");
+                println!("  meetai node available          # 查看可安装版本（含 LTS）");
+                if cfg!(windows) {
+                    println!("  meetai node install lts        # 安装最新 LTS");
+                }
             } else {
                 println!("已安装的 Node.js 版本（共 {} 个）：", versions.len());
                 for version in versions {
@@ -58,7 +61,32 @@ pub async fn handle_node_command(args: NodeArgs) -> Result<()> {
                 }
                 println!("下一步你可以执行：");
                 println!("  meetai node use <version>      # 切换当前版本");
-                println!("  meetai runtime list nodejs     # 统一入口查看");
+                println!("  meetai node available          # 查看更多可安装版本");
+            }
+        }
+        NodeAction::Available => {
+            let service = NodeService::new()?;
+            let versions = service.list_available().await?;
+
+            if versions.is_empty() {
+                println!("暂时没有获取到可安装的 Node.js 版本信息。");
+            } else {
+                println!("官方可安装的 Node.js 版本（最近 {} 个）：", versions.len());
+                for version in versions {
+                    if let Some(lts_name) = version.lts_name.as_deref() {
+                        println!("  - {}  (LTS: {})", version.version, lts_name);
+                    } else {
+                        println!("  - {}", version.version);
+                    }
+                }
+            }
+            println!("下一步你可以执行：");
+            if cfg!(windows) {
+                println!("  meetai node install lts            # 安装最新 LTS");
+                println!("  meetai node install <version>      # 安装指定版本");
+                println!("  meetai node install project        # 按 .nvmrc 安装项目版本");
+            } else {
+                println!("  meetai node use <version>          # 切换到已安装版本");
             }
         }
         NodeAction::Install { version } => {
@@ -66,7 +94,7 @@ pub async fn handle_node_command(args: NodeArgs) -> Result<()> {
             install_node_for_surface(&version, NodeCommandSurface::Node).await?;
         }
         NodeAction::Use { version } => {
-            validator.validate_node_selected_version(&version)?;
+            validator.validate_node_use_version(&version)?;
             use_node_for_surface(&version, NodeCommandSurface::Node)?;
         }
         NodeAction::Uninstall { version } => {

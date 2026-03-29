@@ -13,6 +13,15 @@ pub struct NodeVersion {
     pub path: PathBuf,
 }
 
+/// shims 目录加入永久 PATH 的操作结果。
+pub enum PathConfigResult {
+    /// shims 目录已在用户级永久 PATH 中，无需重复配置。
+    AlreadyConfigured,
+    /// shims 目录本次已成功加入用户级永久 PATH。
+    JustConfigured,
+    /// 自动配置失败，含失败原因（供回退到手动提示时使用）。
+    Failed(String),
+}
 impl std::fmt::Display for NodeVersion {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.version)
@@ -234,6 +243,11 @@ impl NodeVersionManager {
             .unwrap_or(false)
     }
 
+    /// 将 shims 目录自动加入用户级永久 PATH（仅首次调用时实际写入）。
+    pub fn ensure_shims_in_path(&self) -> Result<PathConfigResult> {
+        let shims_dir = self.shims_dir()?;
+        Ok(Self::ensure_shims_in_path_platform(&shims_dir))
+    }
     fn ensure_node_dirs(&self) -> Result<()> {
         fs::create_dir_all(self.versions_dir()?).context("创建 Node.js 版本目录失败")?;
         fs::create_dir_all(self.shims_dir()?).context("创建 shims 目录失败")?;
@@ -381,12 +395,15 @@ impl NodeVersionManager {
         } else {
             format!("\"%{}%\" %*\r\n", env_var)
         };
+
+        let runtime_name_echo = Self::escape_cmd_echo_text(runtime_name);
+        let guidance_echo = Self::escape_cmd_echo_text(guidance);
         let script = format!(
-            "@echo off\r\nset \"{env_var}={exe}\"\r\nif not exist \"%{env_var}%\" (\r\n  echo [meetai] 当前 {runtime_name} 可执行文件不存在: %{env_var}% 1>&2\r\n  echo [meetai] 请先执行: {guidance} 1>&2\r\n  exit /b 1\r\n)\r\n{invoke}",
+            "@echo off\r\nset \"{env_var}={exe}\"\r\nif not exist \"%{env_var}%\" (\r\n  >&2 echo [meetai] 当前 {runtime_name} 可执行文件不存在: %{env_var}%\r\n  >&2 echo [meetai] 请先执行: {guidance}\r\n  exit /b 1\r\n)\r\n{invoke}",
             env_var = env_var,
             exe = executable_str,
-            runtime_name = runtime_name,
-            guidance = guidance,
+            runtime_name = runtime_name_echo,
+            guidance = guidance_echo,
             invoke = invoke
         );
         let shim_path = shims_dir.join(shim_name);
@@ -404,6 +421,7 @@ impl NodeVersionManager {
         guidance: &str,
     ) -> Result<()> {
         let escaped = Self::escape_sh_single_quotes(&executable.display().to_string());
+
         let script = format!(
             "#!/usr/bin/env sh\n{env_var}='{executable}'\nif [ ! -x \"${env_var}\" ]; then\n  echo \"[meetai] 当前 {runtime_name} 可执行文件不存在: ${env_var}\" >&2\n  echo \"[meetai] 请先执行: {guidance}\" >&2\n  exit 1\nfi\nexec \"${env_var}\" \"$@\"\n",
             env_var = env_var,
@@ -436,10 +454,110 @@ impl NodeVersionManager {
         Self::normalize_version_token(first)
     }
 
+    fn escape_cmd_echo_text(raw: &str) -> String {
+        raw.replace('^', "^^")
+            .replace('&', "^&")
+            .replace('|', "^|")
+            .replace('<', "^<")
+            .replace('>', "^>")
+            .replace('(', "^(")
+            .replace(')', "^)")
+    }
+
     fn escape_sh_single_quotes(raw: &str) -> String {
         raw.replace('\'', "'\"'\"'")
     }
 
+    /// Windows 实现：通过 PowerShell 读写 HKCU\Environment 中的 Path。
+    #[cfg(windows)]
+    fn ensure_shims_in_path_platform(shims_dir: &Path) -> PathConfigResult {
+        let shims_str = shims_dir.to_string_lossy();
+        let shims_escaped = shims_str.replace('\'', "''");
+
+        let script = format!(
+            "$ErrorActionPreference='Stop';\
+$s='{shims}';\
+$p=[string][Environment]::GetEnvironmentVariable('Path','User');\
+if(($p -split ';') -icontains $s){{Write-Output 'already'}}else{{\
+if($p){{$np=$s+';'+$p}}else{{$np=$s}};\
+[Environment]::SetEnvironmentVariable('Path',$np,'User');\
+Write-Output 'added'}}",
+            shims = shims_escaped
+        );
+
+        match Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+            .output()
+        {
+            Ok(output) if output.status.success() => {
+                let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if stdout == "already" {
+                    PathConfigResult::AlreadyConfigured
+                } else {
+                    PathConfigResult::JustConfigured
+                }
+            }
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                PathConfigResult::Failed(if stderr.is_empty() {
+                    "PowerShell 执行失败（退出码非零）".to_string()
+                } else {
+                    stderr
+                })
+            }
+            Err(e) => PathConfigResult::Failed(format!("无法启动 PowerShell: {}", e)),
+        }
+    }
+
+    /// Unix 实现：向 .bashrc / .zshrc / .bash_profile / .profile 追加 export 语句。
+    #[cfg(not(windows))]
+    fn ensure_shims_in_path_platform(shims_dir: &Path) -> PathConfigResult {
+        use std::io::Write;
+
+        let shims_str = shims_dir.to_string_lossy();
+        let export_line = format!("\n# Added by MeetAI\nexport PATH=\"{}:$PATH\"\n", shims_str);
+
+        let home = match dirs::home_dir() {
+            Some(h) => h,
+            None => return PathConfigResult::Failed("无法确定用户主目录".to_string()),
+        };
+
+        let candidates = [".bashrc", ".zshrc", ".bash_profile", ".profile"];
+
+        for candidate in &candidates {
+            let profile_path = home.join(candidate);
+            if !profile_path.exists() {
+                continue;
+            }
+            if let Ok(content) = fs::read_to_string(&profile_path) {
+                if content.contains(shims_str.as_ref()) {
+                    return PathConfigResult::AlreadyConfigured;
+                }
+            }
+        }
+
+        let mut written = false;
+        for candidate in &candidates {
+            let profile_path = home.join(candidate);
+            if !profile_path.exists() {
+                continue;
+            }
+            if let Ok(mut file) = fs::OpenOptions::new().append(true).open(&profile_path) {
+                if file.write_all(export_line.as_bytes()).is_ok() {
+                    written = true;
+                }
+            }
+        }
+
+        if written {
+            PathConfigResult::JustConfigured
+        } else {
+            PathConfigResult::Failed(
+                "未找到可写入的 shell 配置文件（.bashrc/.zshrc/.bash_profile/.profile）"
+                    .to_string(),
+            )
+        }
+    }
     fn paths_equal(a: &Path, b: &Path) -> bool {
         if cfg!(windows) {
             let left = a.to_string_lossy().replace('/', "\\").to_lowercase();
@@ -454,7 +572,9 @@ impl NodeVersionManager {
 #[cfg(test)]
 mod tests {
     use super::NodeVersionManager;
+    use std::fs;
     use std::path::PathBuf;
+    use tempfile::tempdir;
 
     #[test]
     fn parse_node_version_output_supports_v_prefix() {
@@ -477,5 +597,26 @@ mod tests {
         } else {
             assert!(node_exe.ends_with("bin/node"));
         }
+    }
+
+    #[test]
+    fn windows_node_shim_uses_stderr_prefix_echo() {
+        let temp = tempdir().expect("tempdir should be created");
+        let shim_path = temp.path().join("node.cmd");
+        NodeVersionManager::write_windows_executable_shim(
+            temp.path(),
+            "node.cmd",
+            "MEETAI_NODE_EXE",
+            &PathBuf::from(r"D:\Node\node.exe"),
+            "Node.js",
+            "meetai node use <version>",
+            false,
+        )
+        .expect("shim should be written");
+
+        let script = fs::read_to_string(shim_path).expect("shim should be readable");
+        assert!(script.contains(">&2 echo [meetai] 当前 Node.js 可执行文件不存在"));
+        assert!(script.contains(">&2 echo [meetai] 请先执行: meetai node use ^<version^>"));
+        assert!(!script.contains(" 1>&2"));
     }
 }

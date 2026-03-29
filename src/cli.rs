@@ -85,7 +85,7 @@ pub enum RuntimeAction {
         #[arg(value_enum)]
         runtime: Option<RuntimeType>,
     },
-    /// 安装指定运行时版本（注：Python / Node.js 自动安装仅支持 Windows；macOS/Linux 仅支持使用 MeetAI 已管理版本）
+    /// 安装指定运行时版本（Windows 可自动下载安装；macOS/Linux 需手动安装后用 'use' 命令切换）
     Install {
         /// 运行时类型
         #[arg(value_enum)]
@@ -123,7 +123,7 @@ pub struct PythonArgs {
 pub enum PythonAction {
     /// 列出所有已安装的 Python 版本
     List,
-    /// 安装指定版本的 Python（注：自动安装仅支持 Windows；macOS/Linux 仅支持使用 MeetAI 已管理版本）
+    /// 安装指定版本的 Python（Windows 可自动下载安装；macOS/Linux 需手动安装后用 'use' 命令切换）
     Install {
         /// Python 版本号
         version: String,
@@ -152,12 +152,14 @@ pub struct NodeArgs {
 pub enum NodeAction {
     /// 列出所有已安装的 Node.js 版本
     List,
-    /// 安装指定版本的 Node.js（自动安装目前仅支持 Windows）
+    /// 查看官方可安装的 Node.js 版本（含 LTS 标记）
+    Available,
+    /// 安装指定版本的 Node.js（支持 latest / newest / lts / project；Windows 可自动下载安装）
     Install {
         /// Node.js 版本号
         version: String,
     },
-    /// 切换全局 Node.js 版本
+    /// 切换全局 Node.js 版本（支持 project，从当前目录或父目录的 .nvmrc 读取）
     Use {
         /// Node.js 版本号
         version: String,
@@ -259,8 +261,8 @@ pub struct QuickInstallArgs {
     #[arg(long, default_value_t = false, action = clap::ArgAction::Set)]
     pub install_nodejs: bool,
 
-    /// Node.js 版本，默认为 latest
-    #[arg(long, default_value = "latest")]
+    /// Node.js 版本，默认为 lts（更适合新手与项目默认开发）
+    #[arg(long, default_value = "lts")]
     pub nodejs_version: String,
 
     /// 是否安装 Java（当前为规划支持能力）
@@ -296,6 +298,7 @@ mod tests {
         };
 
         assert!(args.create_venv);
+        assert_eq!(args.nodejs_version, "lts");
     }
 
     #[test]
@@ -405,5 +408,17 @@ mod tests {
         };
 
         assert_eq!(version, "20.11.1");
+    }
+
+    #[test]
+    fn node_available_parses() {
+        let cli = parse_cli(&["meetai", "node", "available"]);
+        let Commands::Node(args) = cli.command else {
+            panic!("expected node command");
+        };
+
+        let NodeAction::Available = args.action else {
+            panic!("expected node available action");
+        };
     }
 }

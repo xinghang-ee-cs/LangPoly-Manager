@@ -1,12 +1,15 @@
-use crate::node::installer::NodeInstaller;
-use crate::node::version::{NodeVersion, NodeVersionManager};
+use crate::node::installer::{AvailableNodeVersion, NodeInstaller};
+use crate::node::project::resolve_project_version_from_nvmrc;
+use crate::node::version::{NodeVersion, NodeVersionManager, PathConfigResult};
 use crate::utils::guidance::print_node_path_guidance;
+use crate::utils::progress::moon_spinner_style;
 use anyhow::{Context, Result};
+use indicatif::ProgressBar;
 use std::path::PathBuf;
+use std::time::Duration;
 
 /// Node.js 领域服务，统一封装安装、卸载、版本切换与 PATH 引导逻辑。
 pub struct NodeService {
-    installer: NodeInstaller,
     manager: NodeVersionManager,
 }
 
@@ -16,6 +19,14 @@ pub enum NodeUsePathStatus {
     ShimsInPath,
     CommandReady,
     NeedsPathConfiguration,
+}
+
+/// 自动确保 shims 目录加入 PATH 的执行结果。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EnsureShimsResult {
+    JustConfigured,
+    AlreadyConfigured,
+    Failed { reason: String, shims_dir: PathBuf },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -28,7 +39,6 @@ impl NodeService {
     /// 构建 `NodeService`。
     pub fn new() -> Result<Self> {
         Ok(Self {
-            installer: NodeInstaller::new()?,
             manager: NodeVersionManager::new()?,
         })
     }
@@ -38,9 +48,14 @@ impl NodeService {
         self.manager.list_installed()
     }
 
+    /// 列出官方可安装的 Node.js 版本（含 LTS 标记）。
+    pub async fn list_available(&self) -> Result<Vec<AvailableNodeVersion>> {
+        NodeInstaller::new()?.list_available_versions().await
+    }
+
     /// 安装指定 Node.js 版本，返回实际安装版本号。
     pub async fn install(&self, version: &str) -> Result<String> {
-        self.installer.install(version).await
+        NodeInstaller::new()?.install(version).await
     }
 
     /// 卸载指定 Node.js 版本。
@@ -63,11 +78,28 @@ impl NodeService {
         self.manager.shims_dir()
     }
 
+    /// 检查 shims 目录是否已在当前 PATH。
+    pub fn is_shims_in_path(&self) -> Result<bool> {
+        self.manager.is_shims_in_path()
+    }
+
     /// 检测 `node use` 后当前会话可用性状态。
     pub fn detect_use_path_status(&self, version: &str) -> Result<NodeUsePathStatus> {
         let shims_in_path = self.manager.is_shims_in_path()?;
         let command_ready = !shims_in_path && self.manager.node_command_matches_version(version);
         Ok(classify_use_path_status(shims_in_path, command_ready))
+    }
+
+    /// 尝试自动确保 shims 目录加入 PATH，并返回结果类型供上层做用户提示。
+    pub fn ensure_shims_in_path(&self) -> Result<EnsureShimsResult> {
+        let result = self.manager.ensure_shims_in_path()?;
+        map_ensure_shims_result(result, || self.manager.shims_dir())
+    }
+
+    /// 完成版本激活，并复用统一的 PATH 引导流程。
+    pub fn activate_version(&self, version: &str) -> Result<()> {
+        self.set_current_version(version)?;
+        handle_node_use_path_setup(self, version)
     }
 }
 
@@ -101,11 +133,15 @@ pub(crate) async fn install_node_for_surface(
 
 pub(crate) fn use_node_for_surface(version: &str, surface: NodeCommandSurface) -> Result<()> {
     let service = NodeService::new()?;
+    let resolved_version = if version == "project" {
+        resolve_project_version_from_nvmrc()?
+    } else {
+        version.to_string()
+    };
     service
-        .set_current_version(version)
+        .activate_version(&resolved_version)
         .with_context(|| build_use_failure_message(surface, version))?;
-    println!("✅ 已切换到 Node.js {}", version);
-    handle_node_use_path_setup(&service, version)?;
+    println!("✅ 已切换到 Node.js {}", resolved_version);
     match surface {
         NodeCommandSurface::Node => {
             println!("下一步你可以执行：");
@@ -145,15 +181,36 @@ pub(crate) async fn uninstall_node_for_surface(
 fn handle_node_use_path_setup(service: &NodeService, version: &str) -> Result<()> {
     match service.detect_use_path_status(version)? {
         NodeUsePathStatus::ShimsInPath => {
-            println!("  运行 node --version 即可确认。");
+            println!("  运行 node --version / npm --version / npx --version 即可确认。");
         }
         NodeUsePathStatus::CommandReady => {
-            println!("  当前终端已可直接使用目标版本，运行 node --version 确认。");
+            println!("  当前终端已可直接使用目标版本，运行 node --version / npm --version 确认。");
             println!("  如果后续在其他终端未生效，请重启终端后再试。");
         }
         NodeUsePathStatus::NeedsPathConfiguration => {
-            let shims_dir = service.shims_dir()?;
-            print_node_path_guidance(false, &shims_dir);
+            let pb = ProgressBar::new_spinner();
+            pb.set_style(moon_spinner_style());
+            pb.enable_steady_tick(Duration::from_millis(120));
+            pb.set_message("正在配置 PATH...");
+
+            let result = service.ensure_shims_in_path()?;
+            pb.finish_and_clear();
+
+            match result {
+                EnsureShimsResult::JustConfigured => {
+                    println!("✅ 已自动将 shims 目录加入 PATH（永久生效）。");
+                    println!(
+                        "  重启终端后运行 node --version / npm --version 即可（仅需配置一次）。"
+                    );
+                }
+                EnsureShimsResult::AlreadyConfigured => {
+                    println!("  重启终端后运行 node --version / npm --version 即可生效。");
+                }
+                EnsureShimsResult::Failed { reason, shims_dir } => {
+                    println!("自动配置 PATH 失败（{}）。", reason);
+                    print_node_path_guidance(false, &shims_dir);
+                }
+            }
         }
     }
     Ok(())
@@ -208,6 +265,24 @@ fn classify_use_path_status(shims_in_path: bool, command_ready: bool) -> NodeUse
     }
 }
 
+fn map_ensure_shims_result<F>(
+    result: PathConfigResult,
+    shims_dir_loader: F,
+) -> Result<EnsureShimsResult>
+where
+    F: FnOnce() -> Result<PathBuf>,
+{
+    let mapped = match result {
+        PathConfigResult::JustConfigured => EnsureShimsResult::JustConfigured,
+        PathConfigResult::AlreadyConfigured => EnsureShimsResult::AlreadyConfigured,
+        PathConfigResult::Failed(reason) => EnsureShimsResult::Failed {
+            reason,
+            shims_dir: shims_dir_loader()?,
+        },
+    };
+    Ok(mapped)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -237,6 +312,41 @@ mod tests {
         assert_eq!(
             classify_use_path_status(false, false),
             NodeUsePathStatus::NeedsPathConfiguration
+        );
+    }
+
+    #[test]
+    fn map_ensure_shims_result_passes_through_success_states() {
+        assert_eq!(
+            map_ensure_shims_result(PathConfigResult::JustConfigured, || {
+                panic!("shims_dir_loader should not be called")
+            })
+            .expect("success mapping should not fail"),
+            EnsureShimsResult::JustConfigured,
+        );
+        assert_eq!(
+            map_ensure_shims_result(PathConfigResult::AlreadyConfigured, || {
+                panic!("shims_dir_loader should not be called")
+            })
+            .expect("success mapping should not fail"),
+            EnsureShimsResult::AlreadyConfigured,
+        );
+    }
+
+    #[test]
+    fn map_ensure_shims_result_preserves_failure_reason_and_path() {
+        let shims_dir = PathBuf::from(".meetai/shims");
+        let mapped = map_ensure_shims_result(
+            PathConfigResult::Failed("permission denied".to_string()),
+            || Ok(shims_dir.clone()),
+        )
+        .expect("failed mapping should include shims path");
+        assert_eq!(
+            mapped,
+            EnsureShimsResult::Failed {
+                reason: "permission denied".to_string(),
+                shims_dir,
+            }
         );
     }
 }

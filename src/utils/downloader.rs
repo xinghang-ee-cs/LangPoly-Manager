@@ -1,3 +1,4 @@
+use crate::utils::http_client::build_http_client;
 use anyhow::{Context, Result};
 use indicatif::ProgressBar;
 use reqwest::Client;
@@ -13,12 +14,9 @@ pub struct Downloader {
 impl Downloader {
     /// 创建下载器并初始化带超时的 HTTP 客户端。
     pub fn new() -> Result<Self> {
-        let client = Client::builder()
-            .timeout(std::time::Duration::from_secs(300))
-            .build()
-            .context("HTTP 客户端初始化失败")?;
-
-        Ok(Self { client })
+        Ok(Self {
+            client: build_http_client(std::time::Duration::from_secs(300))?,
+        })
     }
 
     /// 下载文件
