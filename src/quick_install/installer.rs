@@ -2,17 +2,17 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use indicatif::ProgressBar;
 use log::warn;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::config::Config;
 use crate::node::NodeService;
 use crate::pip::version::PipVersionManager;
 use crate::python::environment::VenvManager;
 use crate::python::installer::PythonInstaller;
-use crate::python::version::PythonVersionManager;
+use crate::python::PythonService;
 use crate::quick_install::config::QuickInstallConfig;
 use crate::quick_install::validator::QuickInstallValidator;
-use crate::utils::guidance::{network_diagnostic_tips, print_python_path_guidance};
+use crate::utils::guidance::network_diagnostic_tips;
 use crate::utils::progress::moon_bar_style;
 
 #[async_trait]
@@ -22,16 +22,14 @@ trait PythonInstallerOps: Send + Sync {
 
 trait PythonVersionOps: Send + Sync {
     fn list_installed_versions(&self) -> Result<Vec<String>>;
-    fn set_current_version(&self, version: &str) -> Result<()>;
+    fn activate_version(&self, version: &str) -> Result<()>;
     fn get_current_version(&self) -> Result<Option<String>>;
-    fn is_shims_in_path(&self) -> Result<bool>;
-    fn shims_dir(&self) -> Result<PathBuf>;
 }
 
 #[async_trait]
 trait NodeVersionOps: Send + Sync {
     async fn install(&self, version: &str) -> Result<String>;
-    fn set_current_version(&self, version: &str) -> Result<()>;
+    fn activate_version(&self, version: &str) -> Result<()>;
     fn get_current_version(&self) -> Result<Option<String>>;
 }
 
@@ -64,7 +62,7 @@ impl PythonInstallerOps for PythonInstallerAdapter {
 }
 
 struct PythonVersionManagerAdapter {
-    inner: PythonVersionManager,
+    inner: PythonService,
 }
 
 impl PythonVersionOps for PythonVersionManagerAdapter {
@@ -77,20 +75,12 @@ impl PythonVersionOps for PythonVersionManagerAdapter {
             .collect())
     }
 
-    fn set_current_version(&self, version: &str) -> Result<()> {
-        self.inner.set_current_version(version)
+    fn activate_version(&self, version: &str) -> Result<()> {
+        self.inner.activate_version(version)
     }
 
     fn get_current_version(&self) -> Result<Option<String>> {
         self.inner.get_current_version()
-    }
-
-    fn is_shims_in_path(&self) -> Result<bool> {
-        self.inner.is_shims_in_path()
-    }
-
-    fn shims_dir(&self) -> Result<PathBuf> {
-        self.inner.shims_dir()
     }
 }
 
@@ -108,8 +98,8 @@ impl NodeVersionOps for NodeVersionManagerAdapter {
         self.inner.install(version).await
     }
 
-    fn set_current_version(&self, version: &str) -> Result<()> {
-        self.inner.set_current_version(version)
+    fn activate_version(&self, version: &str) -> Result<()> {
+        self.inner.activate_version(version)
     }
 
     fn get_current_version(&self) -> Result<Option<String>> {
@@ -187,7 +177,7 @@ impl QuickInstaller {
                 inner: QuickInstallValidator::new(),
             }),
             version_manager: Box::new(PythonVersionManagerAdapter {
-                inner: PythonVersionManager::new()?,
+                inner: PythonService::new()?,
             }),
         })
     }
@@ -290,7 +280,7 @@ impl QuickInstaller {
 
     async fn install_nodejs(&self, config: &QuickInstallConfig) -> Result<()> {
         let installed_version = self.node_manager.install(&config.nodejs_version).await?;
-        self.node_manager.set_current_version(&installed_version)?;
+        self.node_manager.activate_version(&installed_version)?;
         println!("Node.js {} 已安装并切换为当前版本。", installed_version);
         Ok(())
     }
@@ -312,8 +302,10 @@ impl QuickInstaller {
             if installed_versions.iter().any(|v| v == requested_version) {
                 println!("Python {} 已经安装", requested_version);
                 self.version_manager
-                    .set_current_version(requested_version)?;
-                self.print_python_switch_guidance()?;
+                    .activate_version(requested_version)
+                    .with_context(|| {
+                        Self::build_python_switch_failure_message(requested_version)
+                    })?;
                 return Ok(());
             }
         }
@@ -326,17 +318,9 @@ impl QuickInstaller {
                 Self::build_python_install_failure_message(requested_version, config)
             })?;
         self.version_manager
-            .set_current_version(&installed_version)
+            .activate_version(&installed_version)
             .with_context(|| Self::build_python_switch_failure_message(&installed_version))?;
-        self.print_python_switch_guidance()?;
 
-        Ok(())
-    }
-
-    fn print_python_switch_guidance(&self) -> Result<()> {
-        let shims_in_path = self.version_manager.is_shims_in_path()?;
-        let shims_dir = self.version_manager.shims_dir()?;
-        print_python_path_guidance(shims_in_path, &shims_dir);
         Ok(())
     }
 
@@ -368,7 +352,7 @@ impl QuickInstaller {
             runtime_name, version
         );
         println!(
-            "{} 暂未开放自动安装，跳过此步骤。如需使用，请访问官网手动安装：",
+            "{} 的自动安装功能正在开发中，暂时跳过。如果你需要用，可以先手动安装：",
             runtime_name
         );
         match runtime_name {
@@ -477,7 +461,10 @@ impl QuickInstaller {
         if config.install_nodejs {
             let node_version_display =
                 self.node_manager.get_current_version().unwrap_or_else(|_| {
-                    if config.nodejs_version == "latest" {
+                    if matches!(
+                        config.nodejs_version.as_str(),
+                        "latest" | "newest" | "lts" | "project"
+                    ) {
                         Some("未知（安装后获取失败）".to_string())
                     } else {
                         Some(config.nodejs_version.clone())
@@ -502,6 +489,7 @@ impl QuickInstaller {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
     use std::sync::{Arc, Mutex};
 
     #[derive(Default)]
@@ -551,11 +539,11 @@ mod tests {
             Ok(self.installed.clone())
         }
 
-        fn set_current_version(&self, version: &str) -> Result<()> {
+        fn activate_version(&self, version: &str) -> Result<()> {
             self.calls
                 .lock()
                 .expect("lock call log")
-                .push(format!("python_set_current:{version}"));
+                .push(format!("python_activate:{version}"));
             *self.current.lock().expect("lock current version") = Some(version.to_string());
             Ok(())
         }
@@ -566,22 +554,6 @@ mod tests {
                 .expect("lock call log")
                 .push("python_get_current".to_string());
             Ok(self.current.lock().expect("lock current version").clone())
-        }
-
-        fn is_shims_in_path(&self) -> Result<bool> {
-            self.calls
-                .lock()
-                .expect("lock call log")
-                .push("python_is_shims_in_path".to_string());
-            Ok(true)
-        }
-
-        fn shims_dir(&self) -> Result<PathBuf> {
-            self.calls
-                .lock()
-                .expect("lock call log")
-                .push("python_shims_dir".to_string());
-            Ok(PathBuf::from(".meetai/shims"))
         }
     }
 
@@ -609,11 +581,11 @@ mod tests {
             }
         }
 
-        fn set_current_version(&self, version: &str) -> Result<()> {
+        fn activate_version(&self, version: &str) -> Result<()> {
             self.calls
                 .lock()
                 .expect("lock call log")
-                .push(format!("node_set_current:{version}"));
+                .push(format!("node_activate:{version}"));
             *self.current.lock().expect("lock current version") = Some(version.to_string());
             Ok(())
         }
@@ -806,8 +778,8 @@ mod tests {
             "python installer should be skipped when already installed, calls: {calls:?}"
         );
         assert!(
-            calls.iter().any(|c| c == "python_set_current:3.12.9"),
-            "current python should still be set, calls: {calls:?}"
+            calls.iter().any(|c| c == "python_activate:3.12.9"),
+            "current python should still be activated, calls: {calls:?}"
         );
         Ok(())
     }
@@ -850,8 +822,8 @@ mod tests {
             "node install should be invoked, calls: {calls:?}"
         );
         assert!(
-            calls.iter().any(|c| c == "node_set_current:20.11.1"),
-            "node current version should be updated, calls: {calls:?}"
+            calls.iter().any(|c| c == "node_activate:20.11.1"),
+            "node current version should be activated through the shared flow, calls: {calls:?}"
         );
         assert!(
             calls.iter().any(|c| c == "validator_verify"),
@@ -882,12 +854,8 @@ mod tests {
         let message = err.to_string();
 
         assert!(
-            message.contains("网络诊断建议"),
-            "error should include network diagnostics, got: {message}"
-        );
-        assert!(
-            message.contains("HTTP_PROXY") && message.contains("HTTPS_PROXY"),
-            "error should include proxy hints, got: {message}"
+            message.contains(network_diagnostic_tips()),
+            "error should include shared network diagnostics, got: {message}"
         );
         assert!(
             message.contains("meetai quick-install --python-version latest"),

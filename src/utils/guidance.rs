@@ -2,7 +2,7 @@ use std::path::Path;
 
 /// 返回网络故障排查建议文本，用于下载失败等场景的错误提示补充。
 pub fn network_diagnostic_tips() -> &'static str {
-    "网络诊断建议：\n  1. 用浏览器直接打开下载链接，确认网络可达。\n  2. 如果在校园网/公司网络，请配置代理后重试（环境变量：HTTP_PROXY / HTTPS_PROXY）。\n  3. 检查系统时间是否准确，避免 TLS 证书校验失败。\n  4. 尝试切换网络（如手机热点）后重试。"
+    "下载遇到问题了？试试这些方法：\n  1. 先用浏览器打开下载链接，看看能不能访问。\n  2. 如果在学校或公司网络，可能需要配置代理（可以问问网管或同学怎么设置）。\n  3. 检查电脑时间是否准确（时间不对可能导致连接失败）。\n  4. 换个网络试试，比如用手机热点。\n\n  还是不行？发邮件求助，我们会帮你：xinghang_a@proton.me"
 }
 
 /// 返回 quick-install 场景的常用恢复命令提示。
@@ -13,10 +13,12 @@ pub fn quick_install_help_commands() -> &'static str {
 /// 根据当前 PATH 状态输出 Python 命令生效指引（Windows/Unix 分平台提示）。
 pub fn print_python_path_guidance(shims_in_path: bool, shims_dir: &Path) {
     if shims_in_path {
-        println!("终端中直接运行 python --version 即可确认版本。");
+        println!("终端中直接运行 python --version / pip --version 即可确认版本。");
         return;
     }
 
+    println!("✅ Python 已经安装好了！最后一步，让终端认识它：");
+    println!();
     println!("还需要把 MeetAI 的 shims 目录加入 PATH 才能生效，选一种方式：");
     println!();
     if cfg!(windows) {
@@ -39,16 +41,18 @@ pub fn print_python_path_guidance(shims_in_path: bool, shims_dir: &Path) {
         );
     }
     println!();
-    println!("  配置完成后运行 python --version 确认版本。");
+    println!("  配置完成后运行 python --version / pip --version 确认版本。");
 }
 
 /// 根据当前 PATH 状态输出 Node.js 命令生效指引（Windows/Unix 分平台提示）。
 pub fn print_node_path_guidance(shims_in_path: bool, shims_dir: &Path) {
     if shims_in_path {
-        println!("终端中直接运行 node --version 即可确认版本。");
+        println!("终端中直接运行 node --version / npm --version / npx --version 即可确认版本。");
         return;
     }
 
+    println!("✅ Node.js 已经安装好了！最后一步，让终端认识它：");
+    println!();
     println!("还需要把 MeetAI 的 shims 目录加入 PATH 才能生效，选一种方式：");
     println!();
     if cfg!(windows) {
@@ -71,5 +75,5 @@ pub fn print_node_path_guidance(shims_in_path: bool, shims_dir: &Path) {
         );
     }
     println!();
-    println!("  配置完成后运行 node --version 确认版本。");
+    println!("  配置完成后运行 node --version / npm --version / npx --version 确认版本。");
 }

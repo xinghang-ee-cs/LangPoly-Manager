@@ -59,7 +59,7 @@ pub async fn handle_pip_command(args: PipArgs) -> Result<()> {
             let manager = PipManager::new()?;
             let packages = manager.list().await?;
             if packages.is_empty() {
-                println!("当前还没有安装任何包。");
+                println!("还没有安装任何包，来安装第一个吧！");
                 println!("  meetai pip install <包名>   # 安装第一个包");
             } else {
                 println!("📦 已安装的包（共 {} 个）:", packages.len());

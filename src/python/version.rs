@@ -260,9 +260,12 @@ impl PythonVersionManager {
         } else {
             r#""%MEETAI_PYTHON_EXE%" %*"#
         };
+
+        let guidance = Self::escape_cmd_echo_text("meetai runtime use python <version>");
         let script = format!(
-            "@echo off\r\nset \"MEETAI_PYTHON_EXE={python_exe}\"\r\nif not exist \"%MEETAI_PYTHON_EXE%\" (\r\n  echo [meetai] 当前 Python 可执行文件不存在: %MEETAI_PYTHON_EXE% 1>&2\r\n  echo [meetai] 请先执行: meetai runtime use python ^<version^> 1>&2\r\n  exit /b 1\r\n)\r\n{invoke}\r\n",
+            "@echo off\r\nset \"MEETAI_PYTHON_EXE={python_exe}\"\r\nif not exist \"%MEETAI_PYTHON_EXE%\" (\r\n  >&2 echo [meetai] 当前 Python 可执行文件不存在: %MEETAI_PYTHON_EXE%\r\n  >&2 echo [meetai] 请先执行: {guidance}\r\n  exit /b 1\r\n)\r\n{invoke}\r\n",
             python_exe = python_exe_str,
+            guidance = guidance,
             invoke = invoke_line
         );
         let shim_path = shims_dir.join(shim_name);
@@ -283,6 +286,7 @@ impl PythonVersionManager {
         } else {
             r#"exec "$MEETAI_PYTHON_EXE" "$@""#
         };
+
         let script = format!(
             "#!/usr/bin/env sh\nMEETAI_PYTHON_EXE='{python_exe}'\nif [ ! -x \"$MEETAI_PYTHON_EXE\" ]; then\n  echo \"[meetai] 当前 Python 可执行文件不存在: $MEETAI_PYTHON_EXE\" >&2\n  echo \"[meetai] 请先执行: meetai runtime use python <version>\" >&2\n  exit 1\nfi\n{invoke}\n",
             python_exe = escaped,
@@ -306,6 +310,16 @@ impl PythonVersionManager {
         }
 
         Ok(())
+    }
+
+    fn escape_cmd_echo_text(raw: &str) -> String {
+        raw.replace('^', "^^")
+            .replace('&', "^&")
+            .replace('|', "^|")
+            .replace('<', "^<")
+            .replace('>', "^>")
+            .replace('(', "^(")
+            .replace(')', "^)")
     }
 
     fn escape_sh_single_quotes(raw: &str) -> String {
@@ -340,6 +354,7 @@ impl PythonVersionManager {
         // {{/}} 在 Rust format! 中表示字面量 {/}
         // 注意：PowerShell 5.1 不支持把 if 语句直接内联为 .NET 方法参数，
         // 必须先赋值给中间变量 $np，否则 SetEnvironmentVariable 会静默失败。
+
         let script = format!(
             "$ErrorActionPreference='Stop';\
 $s='{shims}';\
@@ -440,7 +455,9 @@ Write-Output 'added'}}",
 #[cfg(test)]
 mod tests {
     use super::PythonVersionManager;
+    use std::fs;
     use std::path::PathBuf;
+    use tempfile::tempdir;
 
     #[test]
     fn parse_python_version_output_supports_trimmed_stdout() {
@@ -463,5 +480,25 @@ mod tests {
         } else {
             assert!(python_exe.ends_with("bin/python"));
         }
+    }
+
+    #[test]
+    fn windows_python_shim_uses_stderr_prefix_echo() {
+        let temp = tempdir().expect("tempdir should be created");
+        let shim_path = temp.path().join("python.cmd");
+        PythonVersionManager::write_windows_python_shim(
+            temp.path(),
+            "python.cmd",
+            &PathBuf::from(r"D:\Python\python.exe"),
+            false,
+        )
+        .expect("shim should be written");
+
+        let script = fs::read_to_string(shim_path).expect("shim should be readable");
+        assert!(script.contains(">&2 echo [meetai] 当前 Python 可执行文件不存在"));
+        assert!(
+            script.contains(">&2 echo [meetai] 请先执行: meetai runtime use python ^<version^>")
+        );
+        assert!(!script.contains(" 1>&2"));
     }
 }

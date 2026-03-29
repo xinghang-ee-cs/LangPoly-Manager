@@ -9,7 +9,6 @@ use std::time::Duration;
 
 /// Python 领域服务，统一封装安装、卸载、版本切换与 PATH 引导逻辑。
 pub struct PythonService {
-    installer: PythonInstaller,
     manager: PythonVersionManager,
 }
 
@@ -39,7 +38,6 @@ impl PythonService {
     /// 构建 `PythonService`，并初始化安装器与版本管理器依赖。
     pub fn new() -> Result<Self> {
         Ok(Self {
-            installer: PythonInstaller::new()?,
             manager: PythonVersionManager::new()?,
         })
     }
@@ -51,17 +49,22 @@ impl PythonService {
 
     /// 安装指定 Python 版本，返回实际安装版本号（支持 `latest` 解析）。
     pub async fn install(&self, version: &str) -> Result<String> {
-        self.installer.install(version).await
+        PythonInstaller::new()?.install(version).await
     }
 
     /// 卸载指定 Python 版本。
     pub async fn uninstall(&self, version: &str) -> Result<()> {
-        self.installer.uninstall(version).await
+        PythonInstaller::new()?.uninstall(version).await
     }
 
     /// 将指定版本设置为当前激活版本（更新 MeetAI 配置）。
     pub fn set_current_version(&self, version: &str) -> Result<()> {
         self.manager.set_current_version(version)
+    }
+
+    /// 获取当前激活版本。
+    pub fn get_current_version(&self) -> Result<Option<String>> {
+        self.manager.get_current_version()
     }
 
     /// 检测 `python use` 后当前会话的可用性状态，用于决定是否需要 PATH 处理。
@@ -75,6 +78,12 @@ impl PythonService {
     pub fn ensure_shims_in_path(&self) -> Result<EnsureShimsResult> {
         let result = self.manager.ensure_shims_in_path()?;
         map_ensure_shims_result(result, || self.manager.shims_dir())
+    }
+
+    /// 完成版本激活，并复用统一的 PATH 引导流程。
+    pub fn activate_version(&self, version: &str) -> Result<()> {
+        self.set_current_version(version)?;
+        handle_python_use_path_setup(self, version)
     }
 }
 
@@ -109,10 +118,9 @@ pub(crate) async fn install_python_for_surface(
 pub(crate) fn use_python_for_surface(version: &str, surface: PythonCommandSurface) -> Result<()> {
     let service = PythonService::new()?;
     service
-        .set_current_version(version)
+        .activate_version(version)
         .with_context(|| build_use_failure_message(surface, version))?;
     println!("✅ 已切换到 Python {}", version);
-    handle_python_use_path_setup(&service, version)?;
     match surface {
         PythonCommandSurface::Python => {
             println!("下一步你可以执行：");

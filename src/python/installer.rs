@@ -105,7 +105,7 @@ impl PythonInstaller {
             } else {
                 progress.abandon_with_message("❌ 当前平台暂不支持 latest 自动安装");
                 anyhow::bail!(
-                    "当前平台暂不支持自动下载安装 Python。可先执行 `meetai runtime list python` 查看 MeetAI 已管理版本，再执行 `meetai runtime use python <version>`。"
+                    "当前平台暂不支持自动下载安装 Python（我们正在努力支持）。\n\n你可以：\n  1. 先手动安装 Python（访问 python.org）\n  2. 然后用 MeetAI 管理：meetai runtime use python <version>\n  3. 或查看已有版本：meetai runtime list python"
                 );
             }
         } else {
@@ -151,7 +151,7 @@ impl PythonInstaller {
                 resolved_version
             ));
             anyhow::bail!(
-                "当前平台暂不支持自动下载安装 Python {}。可先执行 `meetai runtime list python` 查看 MeetAI 已管理版本，再执行 `meetai runtime use python <version>`。",
+                "当前平台暂不支持自动下载安装 Python {}（我们正在努力支持）。\n\n你可以：\n  1. 先手动安装 Python（访问 python.org）\n  2. 然后用 MeetAI 管理：meetai runtime use python <version>\n  3. 或查看已有版本：meetai runtime list python",
                 resolved_version,
             );
         }
@@ -452,9 +452,10 @@ impl PythonInstaller {
 
     fn build_download_failure_message(version: &str, source_errors: &str) -> String {
         format!(
-            "Python {} 安装包下载失败。\n各下载源反馈：\n{}\n可尝试：\n  - meetai runtime install python <version>\n  - meetai python install <version>\n  - meetai runtime install python latest\n{}",
+            "Python {} 下载失败了 😢\n\n我们尝试了多个下载源，但都没成功：\n{}\n\n别担心，可以试试这些方法：\n  - 换个版本试试：meetai runtime install python <version>\n  - 重试当前版本：meetai python install {}\n  - 安装最新版：meetai runtime install python latest\n\n{}",
             version,
             source_errors,
+            version,
             network_diagnostic_tips()
         )
     }
@@ -967,16 +968,12 @@ mod tests {
         );
 
         assert!(
-            message.contains("网络诊断建议"),
-            "error message should include diagnostic header, got: {message}"
+            message.contains(network_diagnostic_tips()),
+            "error message should include shared network guidance, got: {message}"
         );
         assert!(
-            message.contains("HTTP_PROXY") && message.contains("HTTPS_PROXY"),
-            "error message should include proxy environment hints, got: {message}"
-        );
-        assert!(
-            message.contains("系统时间"),
-            "error message should include system time hint, got: {message}"
+            message.contains("重试当前版本：meetai python install 3.14.3"),
+            "error message should include version-specific retry command, got: {message}"
         );
     }
 }

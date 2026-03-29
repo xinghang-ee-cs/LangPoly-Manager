@@ -117,6 +117,19 @@ impl Config {
             return app_home;
         }
         if let Some(exe_dir) = exe_dir {
+            // 如果 exe 在 bin 子目录，数据放在父目录的 .meetai
+            // 例如：D:\MeetAI\bin\meetai.exe → D:\MeetAI\.meetai
+            if exe_dir
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| name.eq_ignore_ascii_case("bin"))
+                .unwrap_or(false)
+            {
+                if let Some(parent) = exe_dir.parent() {
+                    return parent.join(APP_HOME_DIR);
+                }
+            }
+            // 否则放在同级目录（兼容旧版本）
             return exe_dir.join(APP_HOME_DIR);
         }
         if let Some(home) = user_home {
