@@ -12,10 +12,15 @@ Before starting Step 1, complete all of the following:
 2. Use the full 7-step inspection scope by default:
    - Step 1-7 are all important and should be executed in order.
    - Step 6 and Step 7 should not be skipped unless the user explicitly requests narrowing.
-3. Optional user-info setup:
+3. Discover review scope from Git before Step 1:
+   - Run `git status --porcelain`
+   - Run `git diff --name-only`
+   - If staged changes differ from the working tree, also run `git diff --cached --name-only`
+   - Treat modified/untracked files as the default inspection scope, then widen only when the current step needs broader context
+4. Optional user-info setup:
    - Run `node skills/meetai-rust-code-inspection/tools/setup-user-info.js` only when review logs or commit metadata require identity fields.
    - Do not block technical inspection on missing `me.config.json`.
-4. Read all execution principles below.
+5. Read all execution principles below.
 
 ## Execution principles
 
@@ -24,10 +29,11 @@ Before starting Step 1, complete all of the following:
    - this `README.md`
    - `stepN-*.md`
    - Do not read `stepN+1..7` files in advance.
-3. After each step, provide a report and wait for explicit confirmation (`继续` / `下一步` / `进入 Step X`).
-4. Without explicit confirmation, stop and do not execute next-step checks.
-5. If any file is modified during a step, rerun the same step immediately.
-6. If a step finds no issue and no file change is made:
+3. Start each inspection run by reporting the current Git change scope when available, so the user knows which files are under review first.
+4. After each step, provide a report and wait for explicit confirmation (`继续` / `下一步` / `进入 Step X`).
+5. Without explicit confirmation, stop and do not execute next-step checks.
+6. If any file is modified during a step, rerun the same step immediately.
+7. If a step finds no issue and no file change is made:
    - Do not fabricate modification records.
    - Do not change version/date metadata just for reporting.
 
@@ -61,9 +67,11 @@ Before starting Step 1, complete all of the following:
 
 Use this command sequence for validation when relevant:
 
-1. `cargo fmt --check`
-2. `cargo test --locked`
-3. Optional strict lint:
+1. `git status --porcelain`
+2. `git diff --name-only`
+3. `cargo fmt --check`
+4. `cargo test --locked`
+5. Optional strict lint:
    - `cargo clippy --locked --all-targets -- -D warnings`
 
 ## Unified step report template

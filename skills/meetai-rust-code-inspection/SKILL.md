@@ -1,6 +1,6 @@
 ---
 name: meetai-rust-code-inspection
-description: 7-step Rust code inspection workflow for this MeetAI CLI repository. Use when users request comprehensive checks of changed code or a full pre-commit quality pass.
+description: 7-step Rust code inspection workflow for this MeetAI CLI repository. Use when users request comprehensive checks of changed code, ask to check the code in general, or want a full pre-commit quality pass. Default to current Git changes first.
 ---
 
 # MeetAI Rust Code Inspection
@@ -12,6 +12,7 @@ Use this skill when the user asks for a step-by-step code inspection workflow si
 Auto-trigger this skill when user intent matches comprehensive code inspection, including requests like:
 
 - “帮我对修改后的代码进行全面检查”
+- “帮我对代码做检查”
 - “全面检查这次改动”
 - “做一次完整检查/全量巡检”
 - “提交前帮我把代码全检查一遍”
@@ -32,11 +33,16 @@ This skill provides the same 7-step process for the Rust CLI codebase under `src
    - Step 6 (documentation) and Step 7 (commit readiness) are not optional in default flow.
    - Only skip steps if the user explicitly asks to narrow scope.
 2. Read `references/README.md` before any step.
-3. Execute one step at a time in strict order (Step 1 -> Step 7).
-4. Optional user-info setup (only when needed for review logs or commit metadata):
-   - Run `node skills/meetai-rust-code-inspection/tools/setup-user-info.js`
-   - Read `skills/meetai-rust-code-inspection/me.config.json`
-   - This setup is not required for pure technical inspection.
+3. Discover inspection scope from Git first:
+   - Run `git status --porcelain`
+   - Run `git diff --name-only`
+   - If staged changes may differ from working tree, also run `git diff --cached --name-only`
+   - Use modified/untracked files as the default inspection focus before widening to repo-wide analysis
+4. Execute one step at a time in strict order (Step 1 -> Step 7).
+5. Optional user-info setup (only when needed for review logs or commit metadata):
+    - Run `node skills/meetai-rust-code-inspection/tools/setup-user-info.js`
+    - Read `skills/meetai-rust-code-inspection/me.config.json`
+    - This setup is not required for pure technical inspection.
 
 ## Strict step gate (non-negotiable)
 
