@@ -210,13 +210,15 @@ meetai venv list
 ### 基础用法
 
 ```powershell
-meetai quick-install                   # 默认配置
+meetai quick-install                   # 默认配置（当前目录）
 ```
 
 **默认行为：**
 - 安装最新 Python
-- 创建 "default" 虚拟环境
+- 在当前目标目录（默认 `.`）创建 "default" 虚拟环境
 - 启用自动激活提示
+
+建议先进入项目目录执行，或通过 `--target-dir` 指定要初始化的目录。
 
 ### 常用选项
 
@@ -260,6 +262,7 @@ meetai quick-install --auto-activate false
 ### 场景 1：全新学习 Python
 
 ```powershell
+# 在项目目录中执行
 meetai quick-install
 python --version
 ```

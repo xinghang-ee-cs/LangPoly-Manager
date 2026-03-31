@@ -237,13 +237,13 @@ meetai --help
 meetai runtime list                       # 查看运行时支持矩阵
 meetai runtime list python                # 查看已安装的 Python 版本
 meetai runtime list nodejs                # 查看已安装的 Node.js 版本
-meetai runtime install python latest      # 安装最新 Python
+meetai runtime install python latest      # 安装最新 Python（Windows 自动下载）
 meetai runtime install nodejs lts         # 安装最新 LTS Node.js（Windows）
 meetai runtime use python 3.13.2          # 切换版本
 
 # 一键初始化（新手友好）
-meetai quick-install                      # 自动安装 Python + 创建虚拟环境
-meetai quick-install --install-nodejs true # 同时安装 Node.js
+meetai quick-install                      # 在当前目录初始化 Python + 创建虚拟环境
+meetai quick-install --install-nodejs true # 同时安装 Node.js（默认 LTS）
 
 # Python 包管理
 meetai pip install requests               # 安装包
@@ -265,12 +265,12 @@ meetai venv activate myenv                # 获取激活命令
 ### 场景 1：全新开始，一键搭建
 
 ```powershell
-# 1. 一键安装 Python + 创建虚拟环境
-meetai quick-install
-
-# 2. 创建项目文件夹
+# 1. 创建项目文件夹
 mkdir myproject
 cd myproject
+
+# 2. 在项目目录中一键安装 Python + 创建虚拟环境
+meetai quick-install
 
 # 3. 现在你可以用 python 和 pip 了！
 python --version
@@ -278,8 +278,8 @@ pip install requests
 ```
 
 **发生了什么？**
-- `quick-install` 自动安装最新 Python，并创建虚拟环境
-- 之后在项目文件夹里，`python` 和 `pip` 都会自动使用这个环境
+- 在当前项目目录执行 `quick-install` 时，会自动安装最新 Python，并在该目录创建虚拟环境
+- 之后只要进入这个项目目录，`python` 和 `pip` 都会自动使用这个环境
 
 ---
 
@@ -492,6 +492,10 @@ cargo run -- runtime uninstall nodejs <version>
 1. 改用具体版本重试：`meetai runtime install python 3.13.2`
 2. 查看详细日志：`meetai --verbose runtime install python 3.13.2`
 3. 检查代理或网络策略后重试
+4. 如果你在 macOS/Linux 上执行 `runtime install python latest` 或 `quick-install`：
+   - MeetAI 不会自动下载 Python
+   - 若已存在 MeetAI 已管理版本，`latest` 会回退到本地最高版本
+   - 若没有已管理版本，请先手动安装后执行 `meetai runtime use python <version>`
 
 ---
 
