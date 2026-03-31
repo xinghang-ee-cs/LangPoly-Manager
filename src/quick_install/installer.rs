@@ -1,5 +1,4 @@
 use anyhow::{Context, Result};
-use async_trait::async_trait;
 use indicatif::ProgressBar;
 use log::warn;
 use std::path::Path;
@@ -15,143 +14,128 @@ use crate::quick_install::validator::QuickInstallValidator;
 use crate::utils::guidance::network_diagnostic_tips;
 use crate::utils::progress::moon_bar_style;
 
-#[async_trait]
+/// Python 安装器操作 trait（已由 PythonInstaller 直接实现）。
+#[async_trait::async_trait]
 trait PythonInstallerOps: Send + Sync {
     async fn install(&self, version: &str) -> Result<String>;
 }
 
-trait PythonVersionOps: Send + Sync {
+/// Python 运行时状态操作 trait。
+///
+/// 负责已安装版本查询、激活与当前版本读取，已由 `PythonService` 直接实现。
+trait PythonRuntimeOps: Send + Sync {
     fn list_installed_versions(&self) -> Result<Vec<String>>;
     fn activate_version(&self, version: &str) -> Result<()>;
     fn get_current_version(&self) -> Result<Option<String>>;
 }
 
-#[async_trait]
-trait NodeVersionOps: Send + Sync {
+/// Node.js 运行时操作 trait。
+///
+/// 负责安装、激活与当前版本读取，已由 `NodeService` 直接实现。
+#[async_trait::async_trait]
+trait NodeRuntimeOps: Send + Sync {
     async fn install(&self, version: &str) -> Result<String>;
     fn activate_version(&self, version: &str) -> Result<()>;
     fn get_current_version(&self) -> Result<Option<String>>;
 }
 
-#[async_trait]
+/// Pip 管理操作 trait（已由 PipVersionManager 直接实现）。
+#[async_trait::async_trait]
 trait PipVersionOps: Send + Sync {
     async fn install(&self, version: &str) -> Result<()>;
     async fn upgrade(&self) -> Result<()>;
     fn get_version_string(&self) -> Result<String>;
 }
 
-#[async_trait]
+/// 虚拟环境管理操作 trait（已由 VenvManager 直接实现）。
+#[async_trait::async_trait]
 trait VenvManagerOps: Send + Sync {
     async fn create(&self, name: &str, target_dir: &Path) -> Result<()>;
 }
 
-#[async_trait]
+/// 安装验证操作 trait（已由 QuickInstallValidator 直接实现）。
+#[async_trait::async_trait]
 trait QuickInstallValidatorOps: Send + Sync {
     async fn verify_installation(&self, config: &QuickInstallConfig) -> Result<()>;
 }
 
-struct PythonInstallerAdapter {
-    inner: PythonInstaller,
-}
+// --- 具体类型直接实现对应 trait（删除 adapter 层） ---
 
-#[async_trait]
-impl PythonInstallerOps for PythonInstallerAdapter {
+#[async_trait::async_trait]
+impl PythonInstallerOps for PythonInstaller {
     async fn install(&self, version: &str) -> Result<String> {
-        self.inner.install(version).await
+        PythonInstaller::install(self, version).await
     }
 }
 
-struct PythonVersionManagerAdapter {
-    inner: PythonService,
-}
-
-impl PythonVersionOps for PythonVersionManagerAdapter {
+impl PythonRuntimeOps for PythonService {
     fn list_installed_versions(&self) -> Result<Vec<String>> {
-        Ok(self
-            .inner
-            .list_installed()?
-            .into_iter()
-            .map(|v| v.to_string())
-            .collect())
+        PythonService::list_installed(self)
     }
 
     fn activate_version(&self, version: &str) -> Result<()> {
-        self.inner.activate_version(version)
+        PythonService::activate_version(self, version)
     }
 
     fn get_current_version(&self) -> Result<Option<String>> {
-        self.inner.get_current_version()
+        PythonService::get_current_version(self)
     }
 }
 
-struct PipVersionManagerAdapter {
-    inner: PipVersionManager,
-}
-
-struct NodeVersionManagerAdapter {
-    inner: NodeService,
-}
-
-#[async_trait]
-impl NodeVersionOps for NodeVersionManagerAdapter {
+#[async_trait::async_trait]
+impl NodeRuntimeOps for NodeService {
     async fn install(&self, version: &str) -> Result<String> {
-        self.inner.install(version).await
+        NodeService::install(self, version).await
     }
 
     fn activate_version(&self, version: &str) -> Result<()> {
-        self.inner.activate_version(version)
+        NodeService::activate_version(self, version)
     }
 
     fn get_current_version(&self) -> Result<Option<String>> {
-        self.inner.get_current_version()
+        NodeService::get_current_version(self)
     }
 }
 
-#[async_trait]
-impl PipVersionOps for PipVersionManagerAdapter {
+#[async_trait::async_trait]
+impl PipVersionOps for PipVersionManager {
     async fn install(&self, version: &str) -> Result<()> {
-        self.inner.install(version).await
+        PipVersionManager::install(self, version).await
     }
 
     async fn upgrade(&self) -> Result<()> {
-        self.inner.upgrade().await
+        PipVersionManager::upgrade(self).await
     }
 
     fn get_version_string(&self) -> Result<String> {
-        Ok(self.inner.get_version()?.to_string())
+        Ok(self.get_version()?.to_string())
     }
 }
 
-struct VenvManagerAdapter {
-    inner: VenvManager,
-}
-
-#[async_trait]
-impl VenvManagerOps for VenvManagerAdapter {
+#[async_trait::async_trait]
+impl VenvManagerOps for VenvManager {
     async fn create(&self, name: &str, target_dir: &Path) -> Result<()> {
-        self.inner.create(name, target_dir).await
+        VenvManager::create(self, name, target_dir).await
     }
 }
 
-struct QuickInstallValidatorAdapter {
-    inner: QuickInstallValidator,
-}
-
-#[async_trait]
-impl QuickInstallValidatorOps for QuickInstallValidatorAdapter {
+#[async_trait::async_trait]
+impl QuickInstallValidatorOps for QuickInstallValidator {
     async fn verify_installation(&self, config: &QuickInstallConfig) -> Result<()> {
-        self.inner.verify_installation(config).await
+        QuickInstallValidator::verify_installation(self, config).await
     }
 }
 
-/// 一键安装器
+/// 一键安装器。
+///
+/// 负责编排 Python / Node.js / Pip / 虚拟环境安装，以及安装后的统一校验。
 pub struct QuickInstaller {
     python_installer: Box<dyn PythonInstallerOps>,
-    node_manager: Box<dyn NodeVersionOps>,
+    node_runtime: Box<dyn NodeRuntimeOps>,
     pip_manager: Box<dyn PipVersionOps>,
     venv_manager: Box<dyn VenvManagerOps>,
     validator: Box<dyn QuickInstallValidatorOps>,
-    version_manager: Box<dyn PythonVersionOps>,
+    python_runtime: Box<dyn PythonRuntimeOps>,
 }
 
 impl QuickInstaller {
@@ -161,43 +145,31 @@ impl QuickInstaller {
         config.ensure_dirs()?;
 
         Ok(Self {
-            python_installer: Box::new(PythonInstallerAdapter {
-                inner: PythonInstaller::new()?,
-            }),
-            node_manager: Box::new(NodeVersionManagerAdapter {
-                inner: NodeService::new()?,
-            }),
-            pip_manager: Box::new(PipVersionManagerAdapter {
-                inner: PipVersionManager::new()?,
-            }),
-            venv_manager: Box::new(VenvManagerAdapter {
-                inner: VenvManager::new()?,
-            }),
-            validator: Box::new(QuickInstallValidatorAdapter {
-                inner: QuickInstallValidator::new(),
-            }),
-            version_manager: Box::new(PythonVersionManagerAdapter {
-                inner: PythonService::new()?,
-            }),
+            python_installer: Box::new(PythonInstaller::new()?),
+            node_runtime: Box::new(NodeService::new()?),
+            pip_manager: Box::new(PipVersionManager::new()?),
+            venv_manager: Box::new(VenvManager::new()?),
+            validator: Box::new(QuickInstallValidator::new()),
+            python_runtime: Box::new(PythonService::new()?),
         })
     }
 
     #[cfg(test)]
     fn with_dependencies(
         python_installer: Box<dyn PythonInstallerOps>,
-        node_manager: Box<dyn NodeVersionOps>,
+        node_runtime: Box<dyn NodeRuntimeOps>,
         pip_manager: Box<dyn PipVersionOps>,
         venv_manager: Box<dyn VenvManagerOps>,
         validator: Box<dyn QuickInstallValidatorOps>,
-        version_manager: Box<dyn PythonVersionOps>,
+        python_runtime: Box<dyn PythonRuntimeOps>,
     ) -> Self {
         Self {
             python_installer,
-            node_manager,
+            node_runtime,
             pip_manager,
             venv_manager,
             validator,
-            version_manager,
+            python_runtime,
         }
     }
 
@@ -279,8 +251,8 @@ impl QuickInstaller {
     }
 
     async fn install_nodejs(&self, config: &QuickInstallConfig) -> Result<()> {
-        let installed_version = self.node_manager.install(&config.nodejs_version).await?;
-        self.node_manager.activate_version(&installed_version)?;
+        let installed_version = self.node_runtime.install(&config.nodejs_version).await?;
+        self.node_runtime.activate_version(&installed_version)?;
         println!("Node.js {} 已安装并切换为当前版本。", installed_version);
         Ok(())
     }
@@ -298,10 +270,10 @@ impl QuickInstaller {
         let requested_version = config.python_version.as_str();
 
         if requested_version != "latest" {
-            let installed_versions = self.version_manager.list_installed_versions()?;
+            let installed_versions = self.python_runtime.list_installed_versions()?;
             if installed_versions.iter().any(|v| v == requested_version) {
                 println!("Python {} 已经安装", requested_version);
-                self.version_manager
+                self.python_runtime
                     .activate_version(requested_version)
                     .with_context(|| {
                         Self::build_python_switch_failure_message(requested_version)
@@ -317,7 +289,7 @@ impl QuickInstaller {
             .with_context(|| {
                 Self::build_python_install_failure_message(requested_version, config)
             })?;
-        self.version_manager
+        self.python_runtime
             .activate_version(&installed_version)
             .with_context(|| Self::build_python_switch_failure_message(&installed_version))?;
 
@@ -414,7 +386,7 @@ impl QuickInstaller {
     }
 
     fn print_install_summary(&self, config: &QuickInstallConfig) -> Result<()> {
-        let current_version = self.version_manager.get_current_version()?;
+        let current_version = self.python_runtime.get_current_version()?;
 
         println!(
             "
@@ -460,7 +432,7 @@ impl QuickInstaller {
 
         if config.install_nodejs {
             let node_version_display =
-                self.node_manager.get_current_version().unwrap_or_else(|_| {
+                self.node_runtime.get_current_version().unwrap_or_else(|_| {
                     if matches!(
                         config.nodejs_version.as_str(),
                         "latest" | "newest" | "lts" | "project"
@@ -492,12 +464,13 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::{Arc, Mutex};
 
+    /// 测试用的 PythonInstaller mock（直接实现 trait）
     #[derive(Default)]
     struct MockPythonInstaller {
         calls: Arc<Mutex<Vec<String>>>,
     }
 
-    #[async_trait]
+    #[async_trait::async_trait]
     impl PythonInstallerOps for MockPythonInstaller {
         async fn install(&self, version: &str) -> Result<String> {
             self.calls
@@ -508,29 +481,14 @@ mod tests {
         }
     }
 
-    struct MockFailingPythonInstaller {
-        calls: Arc<Mutex<Vec<String>>>,
-        reason: String,
-    }
-
-    #[async_trait]
-    impl PythonInstallerOps for MockFailingPythonInstaller {
-        async fn install(&self, version: &str) -> Result<String> {
-            self.calls
-                .lock()
-                .expect("lock call log")
-                .push(format!("python_install_fail:{version}"));
-            anyhow::bail!("{}", self.reason);
-        }
-    }
-
-    struct MockPythonVersions {
+    /// 测试用的 PythonRuntime mock
+    struct MockPythonRuntime {
         calls: Arc<Mutex<Vec<String>>>,
         installed: Vec<String>,
         current: Mutex<Option<String>>,
     }
 
-    impl PythonVersionOps for MockPythonVersions {
+    impl PythonRuntimeOps for MockPythonRuntime {
         fn list_installed_versions(&self) -> Result<Vec<String>> {
             self.calls
                 .lock()
@@ -557,18 +515,47 @@ mod tests {
         }
     }
 
+    /// 测试用的 PipManager mock
     #[derive(Default)]
     struct MockPipManager {
         calls: Arc<Mutex<Vec<String>>>,
     }
 
-    struct MockNodeManager {
+    #[async_trait::async_trait]
+    impl PipVersionOps for MockPipManager {
+        async fn install(&self, version: &str) -> Result<()> {
+            self.calls
+                .lock()
+                .expect("lock call log")
+                .push(format!("pip_install:{version}"));
+            Ok(())
+        }
+
+        async fn upgrade(&self) -> Result<()> {
+            self.calls
+                .lock()
+                .expect("lock call log")
+                .push("pip_upgrade".to_string());
+            Ok(())
+        }
+
+        fn get_version_string(&self) -> Result<String> {
+            self.calls
+                .lock()
+                .expect("lock call log")
+                .push("pip_get_version".to_string());
+            Ok("25.0.0".to_string())
+        }
+    }
+
+    /// 测试用的 NodeRuntime mock
+    struct MockNodeRuntime {
         calls: Arc<Mutex<Vec<String>>>,
         current: Mutex<Option<String>>,
     }
 
-    #[async_trait]
-    impl NodeVersionOps for MockNodeManager {
+    #[async_trait::async_trait]
+    impl NodeRuntimeOps for MockNodeRuntime {
         async fn install(&self, version: &str) -> Result<String> {
             self.calls
                 .lock()
@@ -599,39 +586,13 @@ mod tests {
         }
     }
 
-    #[async_trait]
-    impl PipVersionOps for MockPipManager {
-        async fn install(&self, version: &str) -> Result<()> {
-            self.calls
-                .lock()
-                .expect("lock call log")
-                .push(format!("pip_install:{version}"));
-            Ok(())
-        }
-
-        async fn upgrade(&self) -> Result<()> {
-            self.calls
-                .lock()
-                .expect("lock call log")
-                .push("pip_upgrade".to_string());
-            Ok(())
-        }
-
-        fn get_version_string(&self) -> Result<String> {
-            self.calls
-                .lock()
-                .expect("lock call log")
-                .push("pip_get_version".to_string());
-            Ok("25.0.0".to_string())
-        }
-    }
-
+    /// 测试用的 VenvManager mock
     #[derive(Default)]
     struct MockVenvManager {
         calls: Arc<Mutex<Vec<String>>>,
     }
 
-    #[async_trait]
+    #[async_trait::async_trait]
     impl VenvManagerOps for MockVenvManager {
         async fn create(&self, name: &str, _target_dir: &Path) -> Result<()> {
             self.calls
@@ -642,12 +603,13 @@ mod tests {
         }
     }
 
+    /// 测试用的 Validator mock
     #[derive(Default)]
     struct MockValidator {
         calls: Arc<Mutex<Vec<String>>>,
     }
 
-    #[async_trait]
+    #[async_trait::async_trait]
     impl QuickInstallValidatorOps for MockValidator {
         async fn verify_installation(&self, _config: &QuickInstallConfig) -> Result<()> {
             self.calls
@@ -681,7 +643,7 @@ mod tests {
     ) -> QuickInstaller {
         QuickInstaller::with_dependencies(
             python_installer,
-            Box::new(MockNodeManager {
+            Box::new(MockNodeRuntime {
                 calls: calls.clone(),
                 current: Mutex::new(None),
             }),
@@ -694,7 +656,7 @@ mod tests {
             Box::new(MockValidator {
                 calls: calls.clone(),
             }),
-            Box::new(MockPythonVersions {
+            Box::new(MockPythonRuntime {
                 calls: calls.clone(),
                 installed: installed_versions,
                 current: Mutex::new(None),
@@ -834,6 +796,23 @@ mod tests {
 
     #[tokio::test]
     async fn install_surfaces_network_diagnostics_when_python_install_fails() -> Result<()> {
+        #[derive(Default)]
+        struct MockFailingPythonInstaller {
+            calls: Arc<Mutex<Vec<String>>>,
+            reason: String,
+        }
+
+        #[async_trait::async_trait]
+        impl PythonInstallerOps for MockFailingPythonInstaller {
+            async fn install(&self, version: &str) -> Result<String> {
+                self.calls
+                    .lock()
+                    .expect("lock call log")
+                    .push(format!("python_install_fail:{version}"));
+                anyhow::bail!("{}", self.reason);
+            }
+        }
+
         let calls = Arc::new(Mutex::new(Vec::new()));
         let installer = make_test_installer_with_python(
             Box::new(MockFailingPythonInstaller {

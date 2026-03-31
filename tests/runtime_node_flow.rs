@@ -120,7 +120,7 @@ async fn runtime_install_nodejs_uses_node_service_path() -> Result<()> {
             NodeService::new()?
                 .list_installed()?
                 .iter()
-                .any(|item| item.to_string() == version),
+                .any(|item| item == &version),
             "fake node version should be visible to NodeService before runtime install"
         );
 

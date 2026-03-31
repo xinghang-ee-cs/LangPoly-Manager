@@ -1,4 +1,5 @@
 use crate::config::Config;
+use crate::runtime::common::{RuntimeInstaller, RuntimeUninstaller};
 use crate::utils::downloader::Downloader;
 use crate::utils::executor::CommandExecutor;
 use crate::utils::guidance::network_diagnostic_tips;
@@ -461,9 +462,24 @@ impl PythonInstaller {
     }
 }
 
+#[async_trait::async_trait]
+impl RuntimeInstaller for PythonInstaller {
+    async fn install_version(&self, version: &str) -> Result<String> {
+        PythonInstaller::install(self, version).await
+    }
+}
+
+#[async_trait::async_trait]
+impl RuntimeUninstaller for PythonInstaller {
+    async fn uninstall_version(&self, version: &str) -> Result<()> {
+        PythonInstaller::uninstall(self, version).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime::common::{RuntimeInstaller, RuntimeUninstaller};
     use std::path::Path;
     use std::sync::{Arc, Mutex};
     use tempfile::tempdir;
@@ -484,6 +500,34 @@ mod tests {
             downloader: Downloader::new()?,
             executor: CommandExecutor::new(),
         })
+    }
+
+    #[tokio::test]
+    async fn runtime_traits_delegate_to_inherent_impl() -> Result<()> {
+        let temp = tempdir()?;
+        let installer_impl = Arc::new(make_installer(temp.path())?);
+        let installer: Arc<dyn RuntimeInstaller> = installer_impl.clone();
+        let uninstaller: Arc<dyn RuntimeUninstaller> = installer_impl;
+
+        let install_err = installer
+            .install_version("not-a-version")
+            .await
+            .expect_err("invalid version should reach inherent install validation");
+        assert!(
+            !install_err.to_string().is_empty(),
+            "install error should come from inherent implementation"
+        );
+
+        let uninstall_err = uninstaller
+            .uninstall_version("not-a-version")
+            .await
+            .expect_err("invalid version should reach inherent uninstall validation");
+        assert!(
+            !uninstall_err.to_string().is_empty(),
+            "uninstall error should come from inherent implementation"
+        );
+
+        Ok(())
     }
 
     async fn spawn_fallback_test_server(

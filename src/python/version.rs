@@ -1,19 +1,10 @@
 use crate::config::Config;
+use crate::runtime::common::{PathConfigResult, VersionManager};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
-
-/// shims 目录加入永久 PATH 的操作结果
-pub enum PathConfigResult {
-    /// shims 目录已在用户级永久 PATH 中，无需重复配置
-    AlreadyConfigured,
-    /// shims 目录本次已成功加入用户级永久 PATH
-    JustConfigured,
-    /// 自动配置失败，含失败原因（供回退到手动提示时使用）
-    Failed(String),
-}
 
 /// Python 版本信息
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -452,12 +443,67 @@ Write-Output 'added'}}",
     }
 }
 
+impl VersionManager for PythonVersionManager {
+    fn command_name(&self) -> &'static str {
+        "python"
+    }
+
+    fn shims_dir(&self) -> Result<PathBuf> {
+        PythonVersionManager::shims_dir(self)
+    }
+
+    fn is_shims_in_path(&self) -> Result<bool> {
+        PythonVersionManager::is_shims_in_path(self)
+    }
+
+    fn command_matches_version(&self, expected_version: &str) -> bool {
+        self.python_command_matches_version(expected_version)
+    }
+
+    fn ensure_shims_in_path(&self) -> Result<PathConfigResult> {
+        PythonVersionManager::ensure_shims_in_path(self)
+    }
+
+    fn print_path_guidance(&self, shims_dir: &Path) {
+        crate::utils::guidance::print_python_path_guidance(
+            self.is_shims_in_path().unwrap_or(false),
+            shims_dir,
+        )
+    }
+
+    fn list_installed(&self) -> Result<Vec<String>> {
+        let versions = PythonVersionManager::list_installed(self)?;
+        Ok(versions.into_iter().map(|v| v.to_string()).collect())
+    }
+
+    fn get_current_version(&self) -> Result<Option<String>> {
+        PythonVersionManager::get_current_version(self)
+    }
+
+    fn set_current_version(&self, version: &str) -> Result<()> {
+        PythonVersionManager::set_current_version(self, version)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::PythonVersionManager;
+    use crate::config::Config;
+    use crate::runtime::common::VersionManager;
     use std::fs;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use tempfile::tempdir;
+
+    fn make_manager(root: &Path) -> anyhow::Result<PythonVersionManager> {
+        let config = Config {
+            python_install_dir: root.join("python"),
+            venv_dir: root.join("venvs"),
+            cache_dir: root.join("cache"),
+            current_python_version: None,
+        };
+        config.ensure_dirs()?;
+        Ok(PythonVersionManager { config })
+    }
 
     #[test]
     fn parse_python_version_output_supports_trimmed_stdout() {
@@ -500,5 +546,28 @@ mod tests {
             script.contains(">&2 echo [meetai] 请先执行: meetai runtime use python ^<version^>")
         );
         assert!(!script.contains(" 1>&2"));
+    }
+
+    #[test]
+    fn version_manager_trait_delegates_to_inherent_impl() -> anyhow::Result<()> {
+        let temp = tempdir()?;
+        let manager: Box<dyn VersionManager> = Box::new(make_manager(temp.path())?);
+
+        let install_dir = temp.path().join("python").join("python-3.13.2");
+        fs::create_dir_all(&install_dir)?;
+
+        let versions = manager.list_installed()?;
+        assert_eq!(versions, vec!["3.13.2".to_string()]);
+
+        let err = manager
+            .set_current_version("not-a-version")
+            .expect_err("invalid version should reach inherent set_current_version validation");
+        assert!(
+            err.to_string()
+                .contains("找不到已安装的 Python not-a-version 版本"),
+            "error should come from inherent implementation: {err}"
+        );
+
+        Ok(())
     }
 }

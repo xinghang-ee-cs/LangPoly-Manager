@@ -1,5 +1,7 @@
 use anyhow::{bail, Result};
 
+pub mod common;
+
 use crate::cli::{RuntimeAction, RuntimeArgs, RuntimeType};
 use crate::node::{
     install_node_for_surface, uninstall_node_for_surface, use_node_for_surface, NodeCommandSurface,
@@ -86,11 +88,10 @@ fn list_runtime_versions(runtime: RuntimeType) -> Result<()> {
                     versions.len()
                 );
                 for version in versions {
-                    let version_text = version.to_string();
-                    if current.as_deref() == Some(version_text.as_str()) {
-                        println!("  - {}  (current)", version_text);
+                    if current.as_deref() == Some(version.as_str()) {
+                        println!("  - {}  (current)", version);
                     } else {
-                        println!("  - {}", version_text);
+                        println!("  - {}", version);
                     }
                 }
                 println!("下一步你可以执行：");

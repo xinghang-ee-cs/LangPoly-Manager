@@ -1,6 +1,7 @@
 use crate::config::Config;
 use crate::node::project::resolve_project_version_from_nvmrc;
 use crate::node::version::NodeVersionManager;
+use crate::runtime::common::RuntimeInstaller;
 use crate::utils::downloader::Downloader;
 use crate::utils::guidance::network_diagnostic_tips;
 use crate::utils::http_client::build_http_client;
@@ -502,10 +503,49 @@ impl NodeInstaller {
     }
 }
 
+#[async_trait::async_trait]
+impl RuntimeInstaller for NodeInstaller {
+    async fn install_version(&self, version: &str) -> Result<String> {
+        NodeInstaller::install(self, version).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime::common::RuntimeInstaller;
+    use std::sync::Arc;
 
+    fn make_installer(root: &std::path::Path) -> Result<NodeInstaller> {
+        let config = Config {
+            python_install_dir: root.join("python"),
+            venv_dir: root.join("venvs"),
+            cache_dir: root.join("cache"),
+            current_python_version: None,
+        };
+        config.ensure_dirs()?;
+
+        let installer = NodeInstaller { config };
+        installer.ensure_node_dirs()?;
+        Ok(installer)
+    }
+
+    #[tokio::test]
+    async fn runtime_installer_trait_delegates_to_inherent_impl() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let installer: Arc<dyn RuntimeInstaller> = Arc::new(make_installer(temp.path())?);
+
+        let install_err = installer
+            .install_version("not-a-version")
+            .await
+            .expect_err("invalid version should reach inherent install validation");
+        assert!(
+            !install_err.to_string().is_empty(),
+            "install error should come from inherent implementation"
+        );
+
+        Ok(())
+    }
     #[test]
     fn choose_latest_version_prefers_higher_semver() {
         let chosen = NodeInstaller::choose_latest_version(

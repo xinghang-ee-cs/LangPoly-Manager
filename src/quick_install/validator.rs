@@ -32,7 +32,7 @@ struct CommandExecutorAdapter {
 #[async_trait]
 impl CommandExecutorOps for CommandExecutorAdapter {
     async fn execute_with_output_async(&self, program: &Path, args: &[&str]) -> Result<String> {
-        self.inner.execute_with_output_async(program, args).await
+        CommandExecutor::execute_with_output_async(&self.inner, program, args).await
     }
 }
 
@@ -45,8 +45,7 @@ impl PythonVersionOps for PythonVersionManagerAdapter {
         &self,
         missing_selection_message: &'static str,
     ) -> Result<PathBuf> {
-        self.inner
-            .current_python_executable(missing_selection_message)
+        PythonVersionManager::current_python_executable(&self.inner, missing_selection_message)
     }
 }
 
@@ -56,8 +55,7 @@ struct NodeVersionManagerAdapter {
 
 impl NodeVersionOps for NodeVersionManagerAdapter {
     fn current_node_executable(&self, missing_selection_message: &'static str) -> Result<PathBuf> {
-        self.inner
-            .current_node_executable(missing_selection_message)
+        NodeVersionManager::current_node_executable(&self.inner, missing_selection_message)
     }
 }
 

@@ -1,4 +1,5 @@
 use crate::config::Config;
+use crate::runtime::common::{PathConfigResult, RuntimeUninstaller, VersionManager};
 use anyhow::{Context, Result};
 use semver::Version;
 use std::env;
@@ -13,15 +14,6 @@ pub struct NodeVersion {
     pub path: PathBuf,
 }
 
-/// shims 目录加入永久 PATH 的操作结果。
-pub enum PathConfigResult {
-    /// shims 目录已在用户级永久 PATH 中，无需重复配置。
-    AlreadyConfigured,
-    /// shims 目录本次已成功加入用户级永久 PATH。
-    JustConfigured,
-    /// 自动配置失败，含失败原因（供回退到手动提示时使用）。
-    Failed(String),
-}
 impl std::fmt::Display for NodeVersion {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.version)
@@ -569,12 +561,78 @@ Write-Output 'added'}}",
     }
 }
 
+impl VersionManager for NodeVersionManager {
+    fn command_name(&self) -> &'static str {
+        "node"
+    }
+
+    fn shims_dir(&self) -> Result<PathBuf> {
+        NodeVersionManager::shims_dir(self)
+    }
+
+    fn is_shims_in_path(&self) -> Result<bool> {
+        NodeVersionManager::is_shims_in_path(self)
+    }
+
+    fn command_matches_version(&self, expected_version: &str) -> bool {
+        self.node_command_matches_version(expected_version)
+    }
+
+    fn ensure_shims_in_path(&self) -> Result<PathConfigResult> {
+        NodeVersionManager::ensure_shims_in_path(self)
+    }
+
+    fn print_path_guidance(&self, shims_dir: &Path) {
+        crate::utils::guidance::print_node_path_guidance(
+            self.is_shims_in_path().unwrap_or(false),
+            shims_dir,
+        )
+    }
+
+    fn list_installed(&self) -> Result<Vec<String>> {
+        let versions = NodeVersionManager::list_installed(self)?;
+        Ok(versions.into_iter().map(|v| v.to_string()).collect())
+    }
+
+    fn get_current_version(&self) -> Result<Option<String>> {
+        NodeVersionManager::get_current_version(self)
+    }
+
+    fn set_current_version(&self, version: &str) -> Result<()> {
+        NodeVersionManager::set_current_version(self, version)
+    }
+}
+
+#[async_trait::async_trait]
+impl RuntimeUninstaller for NodeVersionManager {
+    async fn uninstall_version(&self, version: &str) -> Result<()> {
+        NodeVersionManager::uninstall(self, version)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::NodeVersionManager;
+    use crate::config::Config;
+    use crate::runtime::common::RuntimeUninstaller;
     use std::fs;
     use std::path::PathBuf;
+    use std::sync::Arc;
     use tempfile::tempdir;
+
+    fn make_manager(root: &std::path::Path) -> anyhow::Result<NodeVersionManager> {
+        let config = Config {
+            python_install_dir: root.join("python"),
+            venv_dir: root.join("venvs"),
+            cache_dir: root.join("cache"),
+            current_python_version: None,
+        };
+        config.ensure_dirs()?;
+
+        let manager = NodeVersionManager { config };
+        manager.ensure_node_dirs()?;
+        Ok(manager)
+    }
 
     #[test]
     fn parse_node_version_output_supports_v_prefix() {
@@ -618,5 +676,22 @@ mod tests {
         assert!(script.contains(">&2 echo [meetai] 当前 Node.js 可执行文件不存在"));
         assert!(script.contains(">&2 echo [meetai] 请先执行: meetai node use ^<version^>"));
         assert!(!script.contains(" 1>&2"));
+    }
+
+    #[tokio::test]
+    async fn runtime_uninstaller_trait_delegates_to_inherent_impl() -> anyhow::Result<()> {
+        let temp = tempdir()?;
+        let manager: Arc<dyn RuntimeUninstaller> = Arc::new(make_manager(temp.path())?);
+
+        let err = manager
+            .uninstall_version("not-a-version")
+            .await
+            .expect_err("invalid version should reach inherent uninstall validation");
+        assert!(
+            !err.to_string().is_empty(),
+            "uninstall error should come from inherent implementation"
+        );
+
+        Ok(())
     }
 }

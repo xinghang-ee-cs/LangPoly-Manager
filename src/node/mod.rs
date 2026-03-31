@@ -52,11 +52,10 @@ pub async fn handle_node_command(args: NodeArgs) -> Result<()> {
             } else {
                 println!("已安装的 Node.js 版本（共 {} 个）：", versions.len());
                 for version in versions {
-                    let version_text = version.to_string();
-                    if current.as_deref() == Some(version_text.as_str()) {
-                        println!("  - {}  (current)", version_text);
+                    if current.as_deref() == Some(version.as_str()) {
+                        println!("  - {}  (current)", version);
                     } else {
-                        println!("  - {}", version_text);
+                        println!("  - {}", version);
                     }
                 }
                 println!("下一步你可以执行：");
