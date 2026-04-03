@@ -1,0 +1,118 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows-release:
+    name: windows-release
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Run tests
+        run: cargo test --locked
+
+      - name: Build release binary
+        run: cargo build --release --locked
+
+      - name: Resolve package metadata
+        id: meta
+        shell: pwsh
+        run: |
+          if ("${{ github.ref_type }}" -eq "tag" -and "${{ github.ref_name }}" -ne "") {
+            $version = "${{ github.ref_name }}"
+          } else {
+            $match = Select-String -Path Cargo.toml -Pattern '^version = "(.+)"$' | Select-Object -First 1
+            if (-not $match) {
+              throw "Unable to resolve package version from Cargo.toml"
+            }
+            $version = "v" + $match.Matches[0].Groups[1].Value
+          }
+
+          $package = "meetai-$version-windows-x86_64"
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "package=$package" >> $env:GITHUB_OUTPUT
+          "zip_name=$package.zip" >> $env:GITHUB_OUTPUT
+          "exe_name=$package.exe" >> $env:GITHUB_OUTPUT
+
+      - name: Package release files
+        id: package
+        shell: pwsh
+        run: |
+          $package = "${{ steps.meta.outputs.package }}"
+          $stage = Join-Path $env:RUNNER_TEMP $package
+          $zipPath = Join-Path $env:GITHUB_WORKSPACE "${{ steps.meta.outputs.zip_name }}"
+          $exePath = Join-Path $env:GITHUB_WORKSPACE "${{ steps.meta.outputs.exe_name }}"
+          $shaPath = "$zipPath.sha256"
+
+          if (Test-Path $stage) {
+            Remove-Item -LiteralPath $stage -Recurse -Force
+          }
+
+          New-Item -ItemType Directory -Path $stage | Out-Null
+          Copy-Item -LiteralPath "target\release\meetai.exe" -Destination (Join-Path $stage "meetai.exe") -Force
+          Copy-Item -LiteralPath "README.md" -Destination (Join-Path $stage "README.md") -Force
+          Copy-Item -LiteralPath "LICENSE" -Destination (Join-Path $stage "LICENSE") -Force
+          Copy-Item -LiteralPath "target\release\meetai.exe" -Destination $exePath -Force
+
+          if (Test-Path $zipPath) {
+            Remove-Item -LiteralPath $zipPath -Force
+          }
+
+          if (Test-Path $shaPath) {
+            Remove-Item -LiteralPath $shaPath -Force
+          }
+
+          Compress-Archive -Path $stage -DestinationPath $zipPath -CompressionLevel Optimal
+
+          $sha = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          Set-Content -LiteralPath $shaPath -Value ($sha + ' *' + [System.IO.Path]::GetFileName($zipPath)) -NoNewline
+
+          "zip_path=$zipPath" >> $env:GITHUB_OUTPUT
+          "exe_path=$exePath" >> $env:GITHUB_OUTPUT
+          "sha_path=$shaPath" >> $env:GITHUB_OUTPUT
+
+      - name: Smoke test version output
+        run: .\target\release\meetai.exe --version
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.meta.outputs.package }}
+          path: |
+            ${{ steps.package.outputs.exe_path }}
+            ${{ steps.package.outputs.zip_path }}
+            ${{ steps.package.outputs.sha_path }}
+
+      - name: Publish GitHub release
+        if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            ${{ steps.package.outputs.exe_path }}
+            ${{ steps.package.outputs.zip_path }}
+            ${{ steps.package.outputs.sha_path }}
