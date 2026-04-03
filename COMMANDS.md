@@ -36,7 +36,7 @@ meetai -v <command>        # 启用详细输出（调试用）
 ```powershell
 meetai runtime list                    # 列出所有支持的运行时
 meetai runtime list python             # 列出已安装的 Python 版本
-meetai runtime list nodejs             # 列出已安装的 Node.js 版本
+meetai runtime list node               # 列出已安装的 Node.js 版本
 ```
 
 ### 安装
@@ -47,23 +47,23 @@ meetai runtime install python latest   # 最新稳定版
 meetai runtime install python 3.13.2   # 指定版本
 
 # Node.js（Windows 支持自动安装）
-meetai runtime install nodejs lts      # 最新 LTS（推荐）
-meetai runtime install nodejs latest   # 最新版本
-meetai runtime install nodejs 20.11.1  # 指定版本
+meetai runtime install node lts        # 最新 LTS（推荐）
+meetai runtime install node latest     # 最新版本
+meetai runtime install node 20.11.1    # 指定版本
 ```
 
 ### 切换
 
 ```powershell
 meetai runtime use python 3.13.2
-meetai runtime use nodejs 20.11.1
+meetai runtime use node 20.11.1
 ```
 
 ### 卸载
 
 ```powershell
 meetai runtime uninstall python 3.13.2
-meetai runtime uninstall nodejs 20.11.1
+meetai runtime uninstall node 20.11.1
 ```
 
 ---
@@ -156,7 +156,7 @@ meetai node uninstall 20.11.1
 
 ```powershell
 meetai pip install requests
-meetai pip install requests flask      # 多个包
+meetai pip install django -v 4.2.0     # 安装指定版本
 ```
 
 ### 卸载包
@@ -181,7 +181,7 @@ meetai pip list                        # 列出所有已安装包
 
 ## `venv` 虚拟环境管理
 
-> ⚠️ 需要先用 `meetai python use <version>` 选择 Python 版本
+> ⚠️ 只有 `meetai venv create ...` 需要先用 `meetai python use <version>` 选择 Python 版本；`venv list` 和 `venv activate` 不需要。
 
 ### 创建
 
@@ -215,7 +215,8 @@ meetai quick-install                   # 默认配置（当前目录）
 
 **默认行为：**
 - 安装最新 Python
-- 在当前目标目录（默认 `.`）创建 "default" 虚拟环境
+- 创建名为 `default` 的全局虚拟环境
+- 在当前目标目录（默认 `.`）写入 `.venv` 标记和激活脚本
 - 启用自动激活提示
 
 建议先进入项目目录执行，或通过 `--target-dir` 指定要初始化的目录。
@@ -303,8 +304,9 @@ meetai python use 3.11.0  # 切换
 ## 💡 使用技巧
 
 1. **让命令自动跟随版本**
-   - 将 shims 目录加入 PATH（详见 [README](./README.md)）
-   - `python`、`pip`、`node`、`npm` 会自动使用当前版本
+   - 运行 `meetai python use ...` 或 `meetai node use ...` 时，MeetAI 会在需要时自动尝试把 shims 写入用户 PATH
+   - 如果自动配置失败，或新终端里仍未生效，再按 [README](./README.md) 手动把 shims 目录加入 PATH
+   - `python`、`pip`、`node`、`npm`、`npx` 会自动使用当前版本
 
 2. **查看详细日志**
    - 加 `-v` 选项：`meetai -v runtime install python 3.13.2`

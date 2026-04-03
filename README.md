@@ -155,7 +155,7 @@ Commands:
 
 **2. 放到专属目录（推荐 D 盘集中管理）**
 
-MeetAI 的设计理念是**所有文件集中管理**，删除时只需删除一个文件夹。
+MeetAI 的设计理念是**运行文件和数据集中管理**，主体内容都放在一个主目录里。
 
 我们推荐在 D 盘创建专属文件夹：
 
@@ -170,7 +170,7 @@ Move-Item "$env:USERPROFILE\Downloads\meetai.exe" "D:\MeetAI\bin\meetai.exe"
 **为什么推荐 D 盘？**
 - ✅ 所有数据集中在一个地方：`D:\MeetAI\.meetai\`
 - ✅ 重装系统或换电脑时，整个文件夹复制即可迁移
-- ✅ 删除时，直接删除 `D:\MeetAI` 文件夹，无残留
+- ✅ 删除主体文件时，直接删除 `D:\MeetAI` 即可；如果你把相关路径写进了 PATH，再顺手删除对应的 PATH 条目
 - ✅ 不占用 C 盘空间（C 盘通常空间紧张）
 
 > 💡 你也可以选择其他盘符或路径，如 `E:\Tools\MeetAI\` 或 `D:\Development\MeetAI\`，关键是**所有文件都在同一个父文件夹下**。
@@ -236,13 +236,13 @@ meetai --help
 # 统一运行时管理（推荐）
 meetai runtime list                       # 查看运行时支持矩阵
 meetai runtime list python                # 查看已安装的 Python 版本
-meetai runtime list nodejs                # 查看已安装的 Node.js 版本
+meetai runtime list node                  # 查看已安装的 Node.js 版本
 meetai runtime install python latest      # 安装最新 Python（Windows 自动下载）
-meetai runtime install nodejs lts         # 安装最新 LTS Node.js（Windows）
+meetai runtime install node lts           # 安装最新 LTS Node.js（Windows）
 meetai runtime use python 3.13.2          # 切换版本
 
 # 一键初始化（新手友好）
-meetai quick-install                      # 在当前目录初始化 Python + 创建虚拟环境
+meetai quick-install                      # 在当前目录初始化 Python + 准备项目虚拟环境
 meetai quick-install --install-nodejs true # 同时安装 Node.js（默认 LTS）
 
 # Python 包管理
@@ -269,17 +269,20 @@ meetai venv activate myenv                # 获取激活命令
 mkdir myproject
 cd myproject
 
-# 2. 在项目目录中一键安装 Python + 创建虚拟环境
+# 2. 在项目目录中一键安装 Python + 准备项目虚拟环境
 meetai quick-install
 
-# 3. 现在你可以用 python 和 pip 了！
+# 3. 先确认 Python 已就绪
 python --version
+
+# 4. 如果 quick-install 生成了虚拟环境，先按摘要里的激活提示进入该环境，再安装依赖
 pip install requests
 ```
 
 **发生了什么？**
-- 在当前项目目录执行 `quick-install` 时，会自动安装最新 Python，并在该目录创建虚拟环境
-- 之后只要进入这个项目目录，`python` 和 `pip` 都会自动使用这个环境
+- 在当前项目目录执行 `quick-install` 时，会自动安装最新 Python，并为该项目准备一个名为 `default` 的虚拟环境
+- 虚拟环境实体统一放在 MeetAI 的 `venvs` 目录，项目目录会写入 `.venv` 标记和激活脚本
+- 如果你想把依赖安装进这个项目虚拟环境，请先执行安装摘要里的激活命令，再使用 `pip`
 
 ---
 
@@ -300,9 +303,9 @@ pip install -r requirements.txt
 ```
 
 **小提示：**
-如果 `python --version` 没有变化，需要把 shims 目录加入 PATH（见上文"让 python 命令自动跟随切换"章节）
-- 如果你按推荐使用了 `D:\MeetAI`，路径是 `D:\MeetAI\.meetai\shims`
-- 或者使用自动检测方法：`$meetaiExeDir\.meetai\shims`
+首次执行 `meetai python use <version>` 时，MeetAI 会在需要时自动尝试把 shims 目录写入用户级 PATH。
+- 如果提示“已自动将 shims 目录加入 PATH”，重开终端后再执行 `python --version`
+- 如果自动配置失败，再按下文"让 `python` 命令自动跟随切换"里的手动方法处理
 
 ---
 
@@ -347,22 +350,32 @@ meetai venv activate myenv
 
 ---
 
-## 让 `python` 命令自动跟随切换（推荐）
+## 让 `python` 命令自动跟随切换（自动优先，手动兜底）
 
-执行 `meetai python use <version>` 后，想让终端的 `python` 命令自动指向新版本吗？
+执行 `meetai python use <version>` 时，MeetAI 会先检查 shims 是否已在 PATH 中；如果缺少，会自动尝试写入用户级 PATH。
 
-将 MeetAI 的 shims 目录加入 PATH 即可：
+大多数情况下只要按提示重开终端即可。下面的命令只在自动配置失败，或你想提前手动配置时使用：
 
 ```powershell
 # 方法1：自动检测（推荐）
-# 当前会话立即生效
+# 兼容两种布局：
+# - D:\MeetAI\bin\meetai.exe      -> D:\MeetAI\.meetai\shims
+# - D:\Tools\meetai.exe           -> D:\Tools\.meetai\shims
 $meetaiExeDir = Split-Path -Parent (Get-Command meetai).Source
-$env:Path = "$meetaiExeDir\.meetai\shims;$env:Path"
+$meetaiBaseDir = if ((Split-Path -Leaf $meetaiExeDir) -ieq "bin") {
+    Split-Path -Parent $meetaiExeDir
+} else {
+    $meetaiExeDir
+}
+$meetaiShims = Join-Path $meetaiBaseDir ".meetai\shims"
+
+# 当前会话立即生效
+$env:Path = "$meetaiShims;$env:Path"
 
 # 永久生效（用户级，执行后重开终端）
 [Environment]::SetEnvironmentVariable(
     "Path",
-    "$meetaiExeDir\.meetai\shims;" + [Environment]::GetEnvironmentVariable("Path", "User"),
+    "$meetaiShims;" + [Environment]::GetEnvironmentVariable("Path", "User"),
     "User"
 )
 
@@ -375,7 +388,7 @@ $env:Path = "$meetaiExeDir\.meetai\shims;$env:Path"
 ```
 
 **如何验证？**
-执行后，打开新终端，运行：
+如果你刚执行的是永久生效步骤，请打开新终端后运行：
 ```powershell
 python --version
 ```
@@ -385,18 +398,27 @@ python --version
 
 ---
 
-## 让 `node` / `npm` / `npx` 命令自动跟随切换（推荐）
+## 让 `node` / `npm` / `npx` 命令自动跟随切换（自动优先，手动兜底）
 
-执行 `meetai node use <version>` 后，如果希望终端里的 `node`、`npm`、`npx` 都自动跟随切换，也是把同一个 shims 目录加入 PATH：
+执行 `meetai node use <version>` 时也一样，MeetAI 会先自动检查并在需要时尝试写入用户级 PATH。
+
+如果自动配置失败，手动方式和上面完全一样，因为 Python 和 Node.js 共用同一个 shims 目录：
 
 ```powershell
 # 方法1：自动检测（推荐）
 $meetaiExeDir = Split-Path -Parent (Get-Command meetai).Source
-$env:Path = "$meetaiExeDir\.meetai\shims;$env:Path"
+$meetaiBaseDir = if ((Split-Path -Leaf $meetaiExeDir) -ieq "bin") {
+    Split-Path -Parent $meetaiExeDir
+} else {
+    $meetaiExeDir
+}
+$meetaiShims = Join-Path $meetaiBaseDir ".meetai\shims"
+
+$env:Path = "$meetaiShims;$env:Path"
 
 [Environment]::SetEnvironmentVariable(
     "Path",
-    "$meetaiExeDir\.meetai\shims;" + [Environment]::GetEnvironmentVariable("Path", "User"),
+    "$meetaiShims;" + [Environment]::GetEnvironmentVariable("Path", "User"),
     "User"
 )
 
@@ -467,10 +489,10 @@ cargo run -- venv activate demo
 cargo run -- quick-install --create-venv false
 
 # 6. （可选）验证 Node.js（Windows）
-cargo run -- runtime install nodejs lts
-cargo run -- runtime use nodejs <version>
-cargo run -- runtime list nodejs
-cargo run -- runtime uninstall nodejs <version>
+cargo run -- runtime install node lts
+cargo run -- runtime use node <version>
+cargo run -- runtime list node
+cargo run -- runtime uninstall node <version>
 ```
 
 **验收标准：**
@@ -505,21 +527,22 @@ cargo run -- runtime uninstall nodejs <version>
 
 **解决：**
 1. 确认版本已切换：`meetai runtime list python`
-2. 将 shims 目录加入 PATH（见上文"让 python 命令自动跟随切换"章节）
-   - 如果你按推荐使用了 `D:\MeetAI`，路径是 `D:\MeetAI\.meetai\shims`
-   - 或者使用自动检测方法：`$meetaiExeDir\.meetai\shims`
-3. 重开终端，再执行 `python --version`
+2. 再执行一次 `meetai python use <version>`，留意终端是否提示“已自动将 shims 目录加入 PATH”
+3. 如果提示已自动配置，重开终端后再执行 `python --version`
+4. 如果自动配置失败或仍未生效，再按上文"让 `python` 命令自动跟随切换"中的手动方法加入 shims 目录
 
 ---
 
-### pip/venv 提示"还没有选择 Python 版本"
+### `pip` / `venv create` 提示"还没有选择 Python 版本"
 
-**现象：** 执行 `meetai pip list` 或 `meetai venv list` 时报错
+**现象：** 执行 `meetai pip list`、`meetai pip install ...` 或 `meetai venv create ...` 时报错
 
 **解决：**
 1. 查看已安装版本：`meetai runtime list python`
 2. 切换版本：`meetai python use <version>`
 3. 重试命令
+
+> 💡 `meetai venv list` 不依赖当前 Python 版本，它只是扫描虚拟环境目录；如果列表不符合预期，优先检查目标环境是否已经创建，以及当前使用的 `.meetai`/`MEETAI_HOME` 是否与创建时一致。
 
 ---
 
@@ -547,14 +570,16 @@ D:\MeetAI\
     └── cache\               # 下载缓存
 ```
 
-**删除时：** 直接删除 `D:\MeetAI` 文件夹即可，无任何残留 ✅
+**删除时：** 直接删除 `D:\MeetAI` 文件夹即可移除主体文件；如果之前把 `D:\MeetAI\bin` 或 `D:\MeetAI\.meetai\shims` 写进了用户 PATH，再顺手删除对应 PATH 条目即可。
 
 ### 配置目录优先级
 
 MeetAI 会自动决定数据放在哪里，优先级如下：
 
 1. `MEETAI_HOME` 环境变量（如果已设置）
-2. `meetai.exe` 所在目录下的 `.meetai` 文件夹（推荐）
+2. 可执行文件附近的 `.meetai`
+   - 如果 `meetai.exe` 在 `bin` 子目录，使用父目录下的 `.meetai`
+   - 否则使用 `meetai.exe` 同级的 `.meetai`
 3. 用户主目录：`~/.meetai`（前两者都不可用时回退）
 
 **最佳实践：**
@@ -611,6 +636,5 @@ MeetAI 会自动决定数据放在哪里，优先级如下：
 ## 许可证
 
 MIT License. 详见 [LICENSE](./LICENSE) 文件.
-
 
 
