@@ -1,3 +1,39 @@
+//! Node.js 运行时模块。
+//!
+//! 本模块提供 Node.js 的版本管理、安装、卸载、激活和项目集成功能。
+//! 支持从 nodejs.org 下载官方二进制包，管理多个版本，并通过 shims 实现版本切换。
+//!
+//! 子模块：
+//! - `version`: `NodeVersion` 和 `NodeVersionManager` 实现
+//! - `installer`: `NodeInstaller` 实现，负责下载、解压、验证
+//! - `service`: `NodeService` 实现，业务逻辑层
+//! - `project`: 项目集成，从 `.nvmrc` 自动检测版本
+//!
+//! 主要函数：
+//! - `handle_node_command`: 处理 `meetai node <subcommand>` 命令
+//! - `normalize_version_token`: 规范化版本字符串（去除 `v` 前缀）
+//! - `parse_node_version_from_nvmrc`: 从 `.nvmrc` 内容解析版本
+//! - `resolve_project_version_from_nvmrc`: 从当前目录查找项目版本
+//!
+//! 公开类型：
+//! - `NodeService`: 主服务类型，供 CLI 调用
+//! - `NodeVersionManager`: 版本管理器，供内部使用
+//! - `NodeCommandSurface`: 命令执行上下文
+//!
+//! 设计特点：
+//! - 版本号使用 `semver::Version` 表示，支持语义化版本比较
+//! - 支持 `v` 前缀（如 `v18.17.0`），内部自动处理
+//! - 通过 shims 目录实现版本切换，无需修改全局 PATH
+//! - 集成 `.nvmrc` 支持，适合前端项目工作流
+//!
+//! 与 Python 模块的差异：
+//! - 无虚拟环境子模块（Node.js 使用项目级 `node_modules`）
+//! - 额外管理 `npm` 和 `npx` 命令的 shims
+//! - 版本解析支持 "lts" 和 "latest" 特殊值
+//!
+//! 测试：
+//! - 模块内 `mod tests` 包含版本解析、shim 生成、项目集成测试
+
 pub mod installer;
 mod project;
 pub mod service;

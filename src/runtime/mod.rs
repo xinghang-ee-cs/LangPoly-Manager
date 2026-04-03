@@ -1,3 +1,45 @@
+//! 运行时命令分发模块。
+//!
+//! 本模块是 CLI 运行时命令的入口点，负责将 `meetai runtime` 子命令分发到
+//! 对应的运行时服务（Python、Node.js）。
+//!
+//! 主要函数：
+//! - `handle_runtime_command`: 处理 `runtime install/use/uninstall/list` 命令
+//! - `handle_runtime_available_command`: 处理 `runtime available` 命令（仅 Node.js 支持）
+//!
+//! 命令路由：
+//! | 子命令 | Python 处理函数 | Node.js 处理函数 |
+//! |--------|---------------|-----------------|
+//! | `install` | `install_python_for_surface` | `install_node_for_surface` |
+//! | `use` | `use_python_for_surface` | `use_node_for_surface` |
+//! | `uninstall` | `uninstall_python_for_surface` | `uninstall_node_for_surface` |
+//! | `list` | `PythonService::list_installed` | `NodeService::list_installed` |
+//! | `available` | 不支持 | `NodeInstaller::list_available_versions` |
+//!
+//! 设计特点：
+//! - **统一入口**: 所有 `runtime` 命令经过此处，便于日志、监控、错误处理
+//! - **表面（Surface）抽象**: 通过 `PythonCommandSurface` / `NodeCommandSurface` 区分调用来源
+//! - **延迟加载**: 仅在需要时创建服务实例（如 `list` 命令不创建 installer）
+//!
+//! 执行流程（以 `runtime install python 3.11.5` 为例）：
+//! 1. `handle_runtime_command` 接收 `RuntimeArgs { runtime: Some(Python), action: Install(version) }`
+//! 2. 匹配到 `RuntimeType::Python` 和 `RuntimeAction::Install(version)`
+//! 3. 调用 `install_python_for_surface(PythonCommandSurface::Cli, version)`
+//! 4. `PythonService::install()` 执行安装逻辑
+//! 5. 返回结果给 CLI，显示成功/错误消息
+//!
+//! 错误处理：
+//! - 无效运行时类型：返回 `anyhow::Error`，提示支持的运行时（python/node）
+//! - 操作不支持：返回 `anyhow::Error`，说明原因（如 Python 不支持 `available`）
+//! - 服务错误：传播自各运行时服务的 `anyhow::Error`
+//!
+//! 与 CLI 集成：
+//! - 由 `src/main.rs` 的 `main()` 函数调用
+//! - 对应 `meetai runtime <subcommand>` 命令族
+//!
+//! 测试：
+//! - 模块内 `mod tests` 包含命令分发、错误处理、表面（surface）测试
+
 use anyhow::{bail, Result};
 
 pub mod common;
@@ -75,10 +117,10 @@ fn list_runtime_versions(runtime: RuntimeType) -> Result<()> {
                 println!("还没有安装 {}，让我们开始吧！", runtime.display_name());
                 println!("下一步你可以执行：");
                 if cfg!(windows) {
-                    println!("  meetai runtime install nodejs lts      # 安装最新 LTS");
+                    println!("  meetai runtime install node lts        # 安装最新 LTS");
                 } else {
                     println!("  当前平台暂不支持自动安装。");
-                    println!("  meetai runtime use nodejs <version>    # 切换到已管理版本");
+                    println!("  meetai runtime use node <version>      # 切换到已管理版本");
                 }
                 println!("  meetai node list                       # Node.js 专项管理");
             } else {
@@ -95,7 +137,7 @@ fn list_runtime_versions(runtime: RuntimeType) -> Result<()> {
                     }
                 }
                 println!("下一步你可以执行：");
-                println!("  meetai runtime use nodejs <version>    # 切换版本");
+                println!("  meetai runtime use node <version>      # 切换版本");
                 println!("  meetai node list                       # Node.js 专项管理");
             }
         }

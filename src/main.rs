@@ -3,6 +3,39 @@ use clap::Parser;
 use log::info;
 use meetai::cli::{Commands, MeetAiCli};
 
+/// MeetAI 应用程序入口点。
+///
+/// 负责初始化日志系统、解析命令行参数，并根据子命令分发到对应的处理器。
+/// 支持的所有命令都在 `Commands` 枚举中定义。
+///
+/// # 日志级别
+///
+/// - 默认级别：`info` - 显示关键操作信息
+/// - 使用 `--verbose` 参数：提升到 `debug` - 显示详细调试信息
+///
+/// # 命令分发
+///
+/// 当前支持的命令包括：
+/// - `runtime`: 统一运行时管理（Python/Node.js/Java/Go）
+/// - `python`: Python 版本管理
+/// - `node`: Node.js 版本管理
+/// - `pip`: Python 包管理
+/// - `venv`: 虚拟环境管理
+/// - `quick-install`: 一键安装并初始化环境
+///
+/// # 示例
+///
+/// ```bash
+/// # 查看版本
+/// meetai --version
+///
+/// # 查看所有 Python 版本
+/// meetai python list
+///
+/// # 安装并使用 Python 3.11
+/// meetai python install 3.11.0
+/// meetai python use 3.11.0
+/// ```
 #[tokio::main]
 async fn main() -> Result<()> {
     // 解析命令行参数

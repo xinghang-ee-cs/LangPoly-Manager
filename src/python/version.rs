@@ -1,3 +1,44 @@
+//! Python 版本管理器实现。
+//!
+//! 本模块提供 Python 版本的检测、比较、安装目录管理和 shims 生成功能。
+//! 核心类型包括：
+//! - `PythonVersion`: 表示单个 Python 版本，支持版本比较和字符串解析
+//! - `PythonVersionManager`: 管理多个 Python 版本，负责版本切换、shims 维护和 PATH 配置
+//!
+//! 主要功能：
+//! 1. 版本解析：从 Python 可执行文件路径或版本字符串创建 `PythonVersion`
+//! 2. 版本比较：实现 `PartialEq`、`Eq`、`PartialOrd`、`Ord`、`Display` 用于版本排序和显示
+//! 3. 版本列表：扫描安装目录，返回所有已安装版本
+//! 4. 版本切换：通过 shims 目录和 PATH 配置实现当前版本激活
+//! 5. shims 管理：生成平台特定的 Python 启动脚本（Windows PowerShell / Unix shell）
+//! 6. PATH 检测：检查 shims 是否在 PATH 中，并提供修复指导
+//!
+//! 平台差异：
+//! - Windows: 使用 PowerShell 脚本作为 shim，包含 stderr 前缀 echo 便于调试
+//! - Unix/macOS: 使用 shell 脚本作为 shim，支持 shebang 执行
+//!
+//! 目录结构：
+//! ```text
+//! <app_home>/
+//! ├── versions/           # 各版本安装目录
+//! │   ├── 3.9.13/
+//! │   │   └── python.exe # Windows
+//! │   │   └── bin/python # Unix
+//! │   └── 3.10.5/
+//! └── shims/             # 版本选择器脚本
+//!     └── python         # 指向当前版本的 shim
+//! ```
+//!
+//! 错误处理：
+//! - 版本解析失败返回 `PythonVersionParseError`
+//! - 目录操作失败返回 `std::io::Error`
+//! - 命令执行失败通过 `anyhow::Result` 传播
+//! - shims 配置问题返回 `PathConfigResult` 枚举
+//!
+//! 测试：
+//! - 模块内 `mod tests` 包含版本解析、shim 生成、PATH 配置等单元测试
+//! - 使用 mock 管理器验证 trait 委托行为
+
 use crate::config::Config;
 use crate::runtime::common::{PathConfigResult, VersionManager};
 use anyhow::{Context, Result};

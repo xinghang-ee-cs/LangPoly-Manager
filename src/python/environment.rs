@@ -1,3 +1,51 @@
+//! Python 虚拟环境管理模块。
+//!
+//! 本模块提供 Python 虚拟环境的创建、激活和列表功能，支持跨平台操作。
+//!
+//! 核心类型：
+//! - `VenvManager`: 虚拟环境管理器，负责 venv 的完整生命周期
+//!
+//! 主要功能：
+//! 1. **创建虚拟环境** (`create`): 在指定目录创建新的虚拟环境
+//!    - 调用 `python -m venv <target_dir>` 命令
+//!    - 自动生成激活脚本（Windows: `activate.ps1`, Unix: `bin/activate`）
+//!    - 支持自定义目标目录和虚拟环境名称
+//! 2. **激活虚拟环境** (`activate`): 输出激活指令到 stdout
+//!    - Windows: 输出 `.\<venv_name>\Scripts\Activate.ps1`
+//!    - Unix: 输出 `source <venv_name>/bin/activate`
+//!    - 用户需手动执行输出命令完成激活
+//! 3. **列出虚拟环境** (`list`): 扫描目标目录，返回所有虚拟环境目录名
+//!
+//! 目录结构约定：
+//! ```text
+//! <target_dir>/           # 通常为项目根目录
+//! ├── .venv/              # 默认虚拟环境目录
+//! │   ├── bin/            # Unix 可执行文件
+//! │   │   ├── activate    # 激活脚本
+//! │   │   └── python      # Python 解释器符号链接
+//! │   ├── Lib/            # Windows 库目录
+//! │   └── Scripts/        # Windows 可执行文件
+//! │       ├── activate.ps1 # PowerShell 激活脚本
+//! │       └── python.exe  # Python 解释器
+//! └── other-venv/         # 其他命名虚拟环境
+//! ```
+//!
+//! 平台差异：
+//! - **Windows**: 使用 PowerShell 激活脚本，路径分隔符为 `\`
+//! - **Unix/macOS**: 使用 shell 激活脚本，路径分隔符为 `/`
+//!
+//! 错误处理：
+//! - 虚拟环境创建失败：返回 `anyhow::Error`，包含命令执行错误
+//! - 目录读取失败：返回 `std::io::Error`
+//! - 激活脚本生成失败：返回 `std::io::Error`
+//!
+//! 与 PythonService 集成：
+//! - 通过 `PythonService::handle_venv_command` 暴露给 CLI
+//! - 支持 `venv create`、`venv activate`、`venv list` 三个子命令
+//!
+//! 测试：
+//! - 模块内 `mod tests` 包含激活脚本生成和跨平台路径处理测试
+
 use crate::config::Config;
 use crate::python::version::PythonVersionManager;
 use crate::utils::executor::CommandExecutor;

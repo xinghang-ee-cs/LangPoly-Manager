@@ -1,3 +1,44 @@
+//! 用户指导信息模块。
+//!
+//! 本模块提供友好的用户提示信息，包括网络故障排查、PATH 配置指导、快速命令参考等。
+//! 所有信息均为中文，面向中国用户群体。
+//!
+//! 主要函数：
+//! - `network_diagnostic_tips()`: 网络故障排查步骤（代理、时间、网络切换）
+//! - `quick_install_help_commands()`: 一键安装后的参考命令
+//! - `print_python_path_guidance()`: 根据 PATH 状态输出 Python 激活指引
+//! - `print_node_path_guidance()`: 根据 PATH 状态输出 Node.js 激活指引
+//!
+//! 设计理念：
+//! - 错误消息**友好易懂**，避免技术术语堆砌
+//! - 提供**可操作**的解决步骤，而非抽象描述
+//! - 考虑中国用户网络环境（防火墙、代理、教育网）
+//! - 区分 Windows 和 Unix 平台的命令差异
+//!
+//! 网络诊断建议内容：
+//! 1. 浏览器测试：先用浏览器打开下载链接，确认网络可达
+//! 2. 代理配置：学校/公司网络可能需要代理，询问网管或同学
+//! 3. 系统时间：检查电脑时间是否准确（TLS 证书验证依赖）
+//! 4. 网络切换：尝试手机热点或其他网络
+//! 5. 联系支持：以上都不行，发邮件求助 xinghang_a@proton.me
+//!
+//! PATH 配置指引：
+//! - 检测 shims 目录是否在 PATH 中
+//! - Windows: 指导通过系统属性对话框添加
+//! - Unix: 指导修改 `~/.bashrc`、`~/.zshrc` 等配置文件
+//! - 提供验证命令：`python --version`、`which python`
+//!
+//! 使用示例：
+//! ```rust
+//! use std::path::Path;
+//! use meetai::utils::guidance::print_python_path_guidance;
+//!
+//! let shims_dir = Path::new("/tmp/.meetai/shims");
+//! print_python_path_guidance(false, shims_dir);
+//! ```
+//!
+//! 该模块目前没有单独的单元测试，主要通过运行时流程和人工输出校对来验证。
+
 use std::path::Path;
 
 /// 返回网络故障排查建议文本，用于下载失败等场景的错误提示补充。

@@ -1,3 +1,55 @@
+//! Node.js 版本管理器实现。
+//!
+//! 本模块提供 Node.js 版本的检测、比较、安装目录管理和 shims 生成功能。
+//! 核心类型包括：
+//! - `NodeVersion`: 表示单个 Node.js 版本，支持版本比较和显示
+//! - `NodeVersionManager`: 管理多个 Node.js 版本，负责版本切换、shims 维护和 PATH 配置
+//!
+//! 主要功能：
+//! 1. 版本解析：从目录名提取 `NodeVersion`，支持 `v` 前缀
+//! 2. 版本比较：通过 `semver::Version` 实现语义化版本排序
+//! 3. 版本列表：扫描安装目录，返回所有已安装版本
+//! 4. 版本切换：通过 shims 目录和 PATH 配置实现当前版本激活
+//! 5. shims 管理：生成平台特定的 Node.js 启动脚本（Windows PowerShell / Unix shell）
+//! 6. PATH 检测：检查 shims 是否在 PATH 中，并提供修复指导
+//!
+//! 与 Python 版本管理器的差异：
+//! - Node.js 版本号使用 `semver` 格式（`MAJOR.MINOR.PATCH`）
+//! - 支持 `v` 前缀（如 `v18.17.0`），自动规范化
+//! - 可执行文件名固定为 `node`（而非 `python`）
+//! - 额外管理 `npm` 和 `npx` 命令的 shims
+//!
+//! 目录结构：
+//! ```text
+//! <app_home>/
+//! ├── versions/           # 各版本安装目录
+//! │   ├── v18.17.0/
+//! │   │   ├── bin/       # Unix
+//! │   │   │   ├── node
+//! │   │   │   ├── npm
+//! │   │   │   └── npx
+//! │   │   └── node.exe   # Windows
+//! │   └── v20.5.0/
+//! └── shims/             # 版本选择器脚本
+//!     ├── node           # 指向当前版本的 shim
+//!     ├── npm            # 指向当前版本 npm 的 shim
+//!     └── npx            # 指向当前版本 npx 的 shim
+//! ```
+//!
+//! 平台差异：
+//! - Windows: 使用 PowerShell 脚本作为 shim，包含 stderr 前缀 echo
+//! - Unix/macOS: 使用 shell 脚本作为 shim，支持 shebang 执行
+//!
+//! 错误处理：
+//! - 版本解析失败返回 `anyhow::Error`
+//! - 目录操作失败返回 `std::io::Error`
+//! - 命令执行失败通过 `anyhow::Result` 传播
+//! - shims 配置问题返回 `PathConfigResult` 枚举
+//!
+//! 测试：
+//! - 模块内 `mod tests` 包含版本解析、shim 生成、PATH 配置等单元测试
+//! - 验证 `v` 前缀处理、版本排序、平台特定路径
+
 use crate::config::Config;
 use crate::runtime::common::{PathConfigResult, RuntimeUninstaller, VersionManager};
 use anyhow::{Context, Result};

@@ -1,3 +1,61 @@
+//! 命令执行器实现。
+//!
+//! 本模块提供统一的命令执行接口，封装同步和异步进程启动逻辑。
+//! 用于执行 Python、Node.js、pip 等外部命令，统一错误处理和上下文。
+//!
+//! 核心类型：
+//! - `CommandExecutor`: 零大小类型命令执行器，无状态单例
+//!
+//! 主要方法：
+//! - `new()`: 创建执行器实例（实际是空结构体，无状态）
+//! - `execute()`: 异步执行命令，检查退出状态，失败时返回错误
+//! - `execute_with_output()`: 同步执行并捕获 stdout 输出字符串
+//! - `execute_with_output_async()`: 异步执行并捕获 stdout 输出字符串
+//! - `format_command()`: 将程序路径和参数格式化为可读字符串（用于日志）
+//!
+//! 设计特点：
+//! - **零状态**: `CommandExecutor` 是零大小类型，不保存任何配置
+//! - **同步/异步分离**: 提供同步和异步两个版本，根据调用场景选择
+//! - **统一错误**: 所有错误包装为 `anyhow::Error`，包含命令和参数上下文
+//! - **输出捕获**: 支持捕获 stdout / stderr，并在失败时附带完整上下文
+//!
+//! 同步 vs 异步：
+//! | 方法 | 适用场景 | 阻塞？ |
+//! |------|----------|--------|
+//! | `execute` | 异步运行、无需返回输出（如安装器或卸载器命令） | 否 |
+//! | `execute_with_output` | 需要立即读取输出结果（如 `python --version`） | 是 |
+//! | `execute_with_output_async` | 异步运行且需要输出结果 | 否 |
+//!
+//! 错误处理：
+//! - 命令不存在：`std::io::Error`（Kernel 返回 `ENOENT`）
+//! - 命令执行失败（非零退出码）：`anyhow::Error`，包含命令字符串和 stderr
+//! - 输出读取失败：`std::io::Error`
+//!
+//! 使用示例：
+//! ```rust,no_run
+//! use meetai::utils::executor::CommandExecutor;
+//! use std::path::Path;
+//!
+//! async fn run() -> anyhow::Result<()> {
+//!     let executor = CommandExecutor::new();
+//!
+//!     executor.execute(Path::new("python"), &["-m", "venv", ".venv"]).await?;
+//!
+//!     let python_version = executor.execute_with_output(Path::new("python"), &["--version"])?;
+//!     println!("Python version: {}", python_version.trim());
+//!
+//!     let node_version = executor
+//!         .execute_with_output_async(Path::new("node"), &["--version"])
+//!         .await?;
+//!     println!("Node version: {}", node_version.trim());
+//!     Ok(())
+//! }
+//! ```
+//!
+//! 测试：
+//! - 失败命令包含完整上下文（命令、参数、stderr）
+//! - 异步执行验证并发安全性
+
 use anyhow::{Context, Result};
 use std::path::Path;
 use std::process::Command;

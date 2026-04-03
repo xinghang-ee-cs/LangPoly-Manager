@@ -1,3 +1,42 @@
+//! Python 安装器的版本解析逻辑。
+//!
+//! 本模块负责解析用户请求的 Python 版本字符串，特别是 `"latest"` 特殊值。
+//! 支持从 Python 官网和镜像源获取最新稳定版本信息。
+//!
+//! 主要函数：
+//! - `resolve_target_version`: 解析用户指定的版本（直接返回或解析 latest）
+//! - `resolve_latest_python_version`: 从官网下载页面解析最新稳定版
+//! - `fetch_latest_from_downloads_page`: 从官网下载页面解析最新稳定版
+//! - `fetch_latest_downloadable_from_ftp_index`: 从 FTP 索引中查找带官方安装包的版本
+//! - `parse_latest_from_downloads_body`: 从 HTML 提取最新稳定版
+//! - `parse_stable_versions_from_ftp_index_body`: 从 FTP 索引提取所有稳定版本
+//! - `choose_latest_python_version`: 比较远程、FTP 和本地版本，选择最优值
+//!
+//! 版本解析策略：
+//! 1. **精确版本** (如 `"3.11.5"`): 直接使用，不进行网络请求
+//! 2. **"latest"**: 下载 Python 官网下载页面，解析最新稳定版
+//! 3. **回退机制**: 官网失败时尝试 FTP 索引、本地已安装版本和内置默认版本
+//!
+//! HTML 解析逻辑：
+//! - 查找下载按钮的文本内容（如 "Download Python 3.11.5"）
+//! - 支持 prerelease 标记过滤（跳过 `a1`、`b1`、`rc1` 等）
+//! - 使用 semver 库进行版本号比较
+//!
+//! 网络请求：
+//! - 使用 `reqwest` 库发送 HTTP GET 请求
+//! - 设置 User-Agent 模拟浏览器
+//! - 超时时间 30 秒
+//!
+//! 错误处理：
+//! - 网络失败：返回 `reqwest::Error`，触发回退逻辑
+//! - HTML 解析失败：返回 `anyhow::Error`，提示手动指定版本
+//! - 版本比较失败：返回 `semver::Error`
+//!
+//! 测试：
+//! - 解析函数支持截断 stdout（测试 HTML 片段）
+//! - 版本选择逻辑验证远程/本地优先级
+//! - 回退逻辑验证镜像源使用
+
 use super::*;
 
 impl PythonInstaller {

@@ -1,3 +1,32 @@
+//! Python 运行时服务实现。
+//!
+//! 本模块提供 Python 版本管理的核心业务逻辑，通过组合 [`GenericRuntimeService`] 实现
+//! `VersionManager`、`RuntimeInstaller`、`RuntimeUninstaller` 三个 trait。
+//!
+//! 架构设计：
+//! - `PythonService`: 主服务类型，持有 `GenericRuntimeService` 实例并委托所有操作
+//! - `PythonCommandSurface`: 命令执行上下文，区分 CLI 直接调用与内部 API 调用
+//! - 辅助函数：为不同 `PythonCommandSurface` 构建友好的错误信息
+//!
+//! 主要流程：
+//! 1. **安装** (`install_python_for_surface`): 验证版本 → 调用 installer → 输出下一步提示
+//! 2. **使用** (`use_python_for_surface`): 验证版本存在 → 激活版本 → 更新 PATH 提示
+//! 3. **卸载** (`uninstall_python_for_surface`): 验证版本存在 → 调用 uninstaller → 输出后续提示
+//!
+//! 错误处理策略：
+//! - 安装/卸载失败：保留安装目录便于调试，返回详细错误信息
+//! - 版本不存在：返回 `anyhow::Error` 并提示可用版本列表
+//! - PATH 配置问题：返回 `EnsureShimsResult` 枚举，包含修复建议
+//!
+//! 与 CLI 的集成：
+//! - `handle_python_command`: 分发 Python 子命令（install/use/uninstall/list）
+//! - `handle_venv_command`: 分发虚拟环境子命令（create/activate/list）
+//! - 根据 `PythonCommandSurface` 调整错误消息的友好程度
+//!
+//! 测试覆盖：
+//! - 模块内 `mod tests` 包含 trait 委托验证、错误消息构建测试
+//! - 集成测试在 `tests/runtime_python_flow.rs` 中验证完整流程
+
 use crate::python::{PythonInstaller, PythonVersionManager};
 use crate::runtime::common::{
     EnsureShimsResult, GenericRuntimeService, RuntimeInstaller, RuntimeUninstaller, UsePathStatus,

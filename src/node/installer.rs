@@ -1,3 +1,55 @@
+//! Node.js 安装器实现。
+//!
+//! 本模块提供 Node.js 的自动下载、安装、验证和卸载功能。
+//! 支持从 nodejs.org 官方源和镜像源获取安装包，并处理平台特定解压。
+//!
+//! 主要类型：
+//! - `NodeInstaller`: 安装器主类型，实现 `RuntimeInstaller` trait
+//! - `AvailableNodeVersion`: 可安装版本信息，包含版本号和 LTS 标记
+//! - `NodeDistRelease`: Node.js 官方分发索引中的版本条目
+//!
+//! 核心功能：
+//! 1. **版本发现** (`list_available_versions`): 从 nodejs.org 获取所有可用版本
+//! 2. **版本解析** (`resolve_target_version`): 处理 `"latest"`、`"lts"` 和精确版本
+//! 3. **下载安装** (`install`): 下载归档、解压、复制到安装目录
+//! 4. **验证** (`verify_installation`): 检查可执行文件存在性和版本匹配
+//! 5. **清理** (`cleanup_failed_install`): 失败时删除残留文件
+//!
+//! 数据源：
+//! - **官方索引**: `https://nodejs.org/dist/index.json` (推荐)
+//! - **官方下载页**: `https://nodejs.org/dist/` (HTML 解析，作为回退)
+//! - **镜像源**: `https://npmmirror.com/dist/` (网络故障时使用)
+//!
+//! 支持的归档格式：
+//! - Windows: `node-v<version>-win-x64.zip` / `node-v<version>-win-x86.zip`
+//! - macOS: `node-v<version>-darwin-x64.tar.gz` / `node-v<version>-darwin-arm64.tar.gz`
+//! - Linux: `node-v<version>-linux-x64.tar.xz` / `node-v<version>-linux-arm64.tar.xz`
+//!
+//! 安装流程：
+//! 1. 解析目标版本（精确版本 / latest / lts）
+//! 2. 构建下载 URL（根据平台选择合适归档）
+//! 3. 下载到临时目录（显示进度条）
+//! 4. 解压到临时目录
+//! 5. 复制 `bin/`、`lib/`、`share/` 到 `<app_home>/versions/<version>`
+//! 6. 验证 `node --version` 输出匹配
+//! 7. 清理临时文件
+//!
+//! 平台检测：
+//! - 通过 `target_arch_suffix()` 确定平台标识符（`win-x64`、`darwin-arm64` 等）
+//! - 支持 `aarch64` 作为 `arm64` 的别名
+//!
+//! 错误处理：
+//! - 网络失败：返回 `reqwest::Error`，提供网络诊断建议
+//! - 版本不存在：返回 `anyhow::Error`，列出可用版本
+//! - 解压失败：返回 `anyhow::Error`，触发清理
+//! - 验证失败：返回 `NodeVersionMismatchError`，触发清理
+//!
+//! 测试：
+//! - 版本解析和选择逻辑
+//! - 下载回退机制（官方 → 镜像）
+//! - 平台特定归档选择
+//! - 清理逻辑验证
+
 use crate::config::Config;
 use crate::node::project::resolve_project_version_from_nvmrc;
 use crate::node::version::NodeVersionManager;
@@ -145,7 +197,7 @@ impl NodeInstaller {
             .await
         {
             return Err(err.context(format!(
-                "Node.js {} 下载失败了 😢\n\n别担心，可以试试：\n  - 重试：meetai node install {}\n  - 或者：meetai runtime install nodejs {}\n\n{}",
+                "Node.js {} 下载失败了 😢\n\n别担心，可以试试：\n  - 重试：meetai node install {}\n  - 或者：meetai runtime install node {}\n\n{}",
                 resolved_version,
                 resolved_version,
                 resolved_version,

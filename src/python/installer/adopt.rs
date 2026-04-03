@@ -1,3 +1,41 @@
+//! Python 安装器的现有安装采纳逻辑。
+//!
+//! 本模块处理系统已安装 Python 的检测与采纳（adopt）流程。
+//! 当用户请求安装某个已存在于系统但不在 MeetAI 管理目录中的 Python 版本时，
+//! 安装器会尝试"采纳"该现有安装，将其纳入管理范围。
+//!
+//! 主要函数：
+//! - `try_adopt_existing_installation`: 快速检查并采纳系统 Python（无进度显示）
+//! - `try_adopt_existing_installation_with_progress`: 带进度提示的采纳流程
+//!
+//! 采纳流程：
+//! 1. 在系统常见 Python 安装目录中查找匹配版本的安装
+//! 2. 验证找到的 Python 可执行文件版本是否匹配
+//! 3. 复制安装目录到 MeetAI 管理目录（`<app_home>/versions/<version>`）
+//! 4. 生成 shims 并更新 PATH 配置
+//!
+//! 平台特定的系统 Python 安装位置：
+//! - **Windows**:
+//!   - `C:\Python<version>\` (官方安装器)
+//!   - `C:\Program Files\Python<version>\` (官方安装器)
+//!   - `%LOCALAPPDATA%\Programs\Python\Python<version>\` (用户安装)
+//! - **macOS**:
+//!   - `/Library/Frameworks/Python.framework/Versions/<version>/`
+//!   - `~/Library/Frameworks/Python.framework/Versions/<version>/`
+//! - **Linux**:
+//!   - `/usr/bin/python<version>` (系统包管理器)
+//!   - `/usr/local/bin/python<version>` (源码编译)
+//!
+//! 错误处理：
+//! - 未找到系统安装：返回 `Ok(false)`（非错误，表示无需采纳）
+//! - 目录复制失败：返回 `std::io::Error`，保留原安装目录
+//! - 版本不匹配：返回 `PythonVersionMismatchError`
+//!
+//! 注意：
+//! - 采纳操作是**复制**而非移动，原系统安装保持不变
+//! - 采纳后，MeetAI 管理的版本将优先于系统版本（通过 shims）
+//! - 仅当系统安装的版本与请求版本**完全匹配**时才采纳
+
 use super::*;
 
 impl PythonInstaller {

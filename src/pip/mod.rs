@@ -1,3 +1,43 @@
+//! Pip 包管理模块。
+//!
+//! 本模块提供 Pip 命令的分发和包管理功能，封装 `pip install/uninstall/upgrade/list` 操作。
+//! 通过 `PipManager` 类型暴露给 CLI 和内部调用者。
+//!
+//! 子模块：
+//! - `manager`: `PipManager` 实现，负责包的完整生命周期
+//! - `version`: `PipVersionManager` 实现，负责 pip 版本查询
+//!
+//! 主要函数：
+//! - `handle_pip_command`: 处理 `meetai pip <subcommand>` 命令
+//! - `sanitize_terminal_text`: 清理终端控制字符，防止日志污染
+//! - `resolve_current_python_executable`: 解析当前 Python 可执行文件路径
+//!
+//! 命令路由：
+//! | PipAction | 处理函数 |
+//! |-----------|----------|
+//! | `Install(package)` | `PipManager::install()` |
+//! | `Uninstall(package)` | `PipManager::uninstall()` |
+//! | `Upgrade(package)` | `PipManager::upgrade()` |
+//! | `List` | `PipManager::list()` |
+//!
+//! 设计说明：
+//! - Pip 版本与 Python 环境**强绑定**，不独立管理多个 pip 版本
+//! - 所有 pip 操作使用**当前激活**的 Python 环境
+//! - 命令格式：`<python_exe> -m pip <subcommand> <args>`
+//! - 输出包含进度条（安装/卸载/升级）或简单列表（list）
+//!
+//! 错误处理：
+//! - Python 环境未激活：返回 `anyhow::Error`，提示运行 `meetai python use <version>`
+//! - 包不存在（卸载/升级）：返回 `anyhow::Error`，包含包名
+//! - 网络错误（安装）：返回 `anyhow::Error`，包含 stderr 输出
+//!
+//! 与 PythonService 集成：
+//! - `PythonService::handle_pip_command` 调用 `handle_pip_command`
+//! - 支持 `meetai pip install <package>` 等子命令
+//!
+//! 测试：
+//! - 模块内 `mod tests` 包含命令解析和文本清理测试
+
 pub mod manager;
 pub mod version;
 

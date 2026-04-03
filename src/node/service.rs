@@ -1,3 +1,38 @@
+//! Node.js 运行时服务实现。
+//!
+//! 本模块提供 Node.js 版本管理的核心业务逻辑，通过组合 [`GenericRuntimeService`] 实现
+//! `VersionManager`、`RuntimeInstaller`、`RuntimeUninstaller` 三个 trait。
+//!
+//! 架构设计：
+//! - `NodeService`: 主服务类型，持有 `GenericRuntimeService` 实例并委托所有操作
+//! - `NodeCommandSurface`: 命令执行上下文，区分 CLI 直接调用与内部 API 调用
+//! - 辅助函数：为不同 `NodeCommandSurface` 构建友好的错误信息
+//!
+//! 主要流程：
+//! 1. **安装** (`install_node_for_surface`): 解析版本 → 调用 installer → 输出下一步提示
+//! 2. **使用** (`use_node_for_surface`): 验证版本存在 → 激活版本 → 更新 PATH 提示
+//! 3. **卸载** (`uninstall_node_for_surface`): 验证版本存在 → 调用 uninstaller → 清理当前版本引用
+//!
+//! 特殊能力：
+//! - **项目版本解析**: 通过 `.nvmrc` 文件自动检测项目所需 Node.js 版本
+//!   - 使用 `resolve_project_version_from_nvmrc` 从项目目录向上查找
+//!   - 支持 `v` 前缀和语义化版本号
+//!   - 忽略注释行和空行
+//!
+//! 错误处理策略：
+//! - 安装/卸载失败：保留安装目录便于调试，返回详细错误信息
+//! - 版本不存在：返回 `anyhow::Error` 并提示可用版本列表
+//! - PATH 配置问题：返回 `EnsureShimsResult` 枚举，包含修复建议
+//!
+//! 与 CLI 的集成：
+//! - 通过 `crate::node::handle_node_command` 暴露给 CLI
+//! - 支持 `node install`、`node use`、`node uninstall`、`node list`、`node available` 子命令
+//! - 根据 `NodeCommandSurface` 调整错误消息的友好程度
+//!
+//! 测试覆盖：
+//! - 模块内 `mod tests` 包含 trait 委托验证、错误消息构建测试
+//! - 集成测试在 `tests/runtime_node_flow.rs` 中验证完整流程
+
 use crate::node::installer::NodeInstaller;
 use crate::node::project::resolve_project_version_from_nvmrc;
 use crate::node::version::NodeVersionManager;
@@ -99,7 +134,7 @@ pub(crate) async fn install_node_for_surface(
     println!("Node.js {} 已准备就绪。", installed_version);
     println!("下一步你可以执行：");
     println!(
-        "  meetai runtime use nodejs {}   # 切换到该版本",
+        "  meetai runtime use node {}  # 切换到该版本",
         installed_version
     );
     match surface {
@@ -107,7 +142,7 @@ pub(crate) async fn install_node_for_surface(
             println!("  meetai node list                # 查看所有已安装版本");
         }
         NodeCommandSurface::Runtime => {
-            println!("  meetai runtime list nodejs      # 查看所有已安装版本");
+            println!("  meetai runtime list node      # 查看所有已安装版本");
         }
     }
 
@@ -133,7 +168,7 @@ pub(crate) fn use_node_for_surface(version: &str, surface: NodeCommandSurface) -
         }
         NodeCommandSurface::Runtime => {
             println!("下一步你可以执行：");
-            println!("  meetai runtime list nodejs   # 查看所有已安装版本");
+            println!("  meetai runtime list node   # 查看所有已安装版本");
         }
     }
     Ok(())
@@ -157,8 +192,8 @@ pub(crate) async fn uninstall_node_for_surface(
             println!("  meetai node install latest            # 安装最新版本");
         }
         NodeCommandSurface::Runtime => {
-            println!("  meetai runtime list nodejs            # 查看剩余版本");
-            println!("  meetai runtime install nodejs latest   # 安装最新版本");
+            println!("  meetai runtime list node            # 查看剩余版本");
+            println!("  meetai runtime install node latest # 安装最新版本");
         }
     }
     Ok(())
@@ -168,11 +203,11 @@ pub(crate) async fn uninstall_node_for_surface(
 fn build_install_failure_message(surface: NodeCommandSurface, version: &str) -> String {
     match surface {
         NodeCommandSurface::Node => format!(
-            "Node.js 安装失败（请求版本: {}）。\n若为 Windows，请检查网络后重试；macOS/Linux 当前仅支持手动安装后切换。\n下一步你可以执行：\n  meetai node list\n  meetai runtime list nodejs",
+            "Node.js 安装失败（请求版本: {}）。\n若为 Windows，请检查网络后重试；macOS/Linux 当前仅支持手动安装后切换。\n下一步你可以执行：\n  meetai node list\n  meetai runtime list node",
             version
         ),
         NodeCommandSurface::Runtime => format!(
-            "Node.js 安装失败（请求版本: {}）。\n若为 Windows，请检查网络后重试；macOS/Linux 当前仅支持手动安装后切换。\n下一步你可以执行：\n  meetai runtime list nodejs\n  meetai node list",
+            "Node.js 安装失败（请求版本: {}）。\n若为 Windows，请检查网络后重试；macOS/Linux 当前仅支持手动安装后切换。\n下一步你可以执行：\n  meetai runtime list node\n  meetai node list",
             version
         ),
     }
@@ -182,11 +217,11 @@ fn build_install_failure_message(surface: NodeCommandSurface, version: &str) -> 
 fn build_use_failure_message(surface: NodeCommandSurface, version: &str) -> String {
     match surface {
         NodeCommandSurface::Node => format!(
-            "切换 Node.js 版本失败（目标版本: {}）。\n下一步你可以执行：\n  meetai node list\n  meetai runtime list nodejs",
+            "切换 Node.js 版本失败（目标版本: {}）。\n下一步你可以执行：\n  meetai node list\n  meetai runtime list node",
             version
         ),
         NodeCommandSurface::Runtime => format!(
-            "Node.js 版本切换失败（目标版本: {}）。\n下一步你可以执行：\n  meetai runtime list nodejs\n  meetai node list",
+            "Node.js 版本切换失败（目标版本: {}）。\n下一步你可以执行：\n  meetai runtime list node\n  meetai node list",
             version
         ),
     }
@@ -196,11 +231,11 @@ fn build_use_failure_message(surface: NodeCommandSurface, version: &str) -> Stri
 fn build_uninstall_failure_message(surface: NodeCommandSurface, version: &str) -> String {
     match surface {
         NodeCommandSurface::Node => format!(
-            "卸载 Node.js 失败（目标版本: {}）。\n下一步你可以执行：\n  meetai node list\n  meetai runtime uninstall nodejs {}",
+            "卸载 Node.js 失败（目标版本: {}）。\n下一步你可以执行：\n  meetai node list\n  meetai runtime uninstall node {}",
             version, version
         ),
         NodeCommandSurface::Runtime => format!(
-            "Node.js 卸载失败（目标版本: {}）。\n下一步你可以执行：\n  meetai runtime list nodejs\n  meetai runtime uninstall nodejs {}",
+            "Node.js 卸载失败（目标版本: {}）。\n下一步你可以执行：\n  meetai runtime list node\n  meetai runtime uninstall node {}",
             version, version
         ),
     }

@@ -1,3 +1,54 @@
+//! HTTP 客户端工厂模块。
+//!
+//! 本模块提供统一的 HTTP 客户端构建函数，配置超时、User-Agent、协议版本等通用参数。
+//! 所有模块共享同一套客户端配置，确保一致的行为和资源复用。
+//!
+//! 主要函数：
+//! - `build_http_client`: 构建配置完成的 `reqwest::Client` 实例
+//!
+//! 配置参数：
+//! | 参数 | 值 | 说明 |
+//! |------|-----|------|
+//! | 总超时 | 调用方传入 | 例如下载场景常用 300 秒 |
+//! | 连接超时 | 30 秒 | TCP 握手超时 |
+//! | 协议版本 | HTTP/1.1 only | 避免 Windows 下 HTTP/2 TLS 兼容问题 |
+//! | User-Agent | `meetai/<cargo_pkg_version>` | 标识客户端身份 |
+//!
+//! 设计考虑：
+//! - **HTTP/1.1 强制**: 某些 Windows 环境（特别是国内杀毒软件/防火墙）对 HTTP/2 ALPN 协商支持不佳，强制 HTTP/1.1 提高兼容性
+//! - **长超时**: 下载大文件（如 Python 安装包 ~50MB）需要足够时间
+//! - **连接池**: `reqwest::Client` 内部维护连接池，建议全局复用而非每次创建
+//! - **无重试**: 重试逻辑由调用方（如 `Downloader`）控制，避免客户端层隐藏错误
+//!
+//! 使用示例：
+//! ```rust,no_run
+//! use meetai::utils::http_client::build_http_client;
+//! use std::time::Duration;
+//!
+//! async fn fetch() -> anyhow::Result<()> {
+//!     let client = build_http_client(Duration::from_secs(300))?;
+//!     let response = client
+//!         .get("https://nodejs.org/dist/index.json")
+//!         .send()
+//!         .await?;
+//!     println!("status = {}", response.status());
+//!     Ok(())
+//! }
+//! ```
+//!
+//! 错误处理：
+//! - 客户端构建失败（TLS 配置等）：返回 `anyhow::Error`
+//! - 实际请求错误由 `reqwest::Error` 传播，调用方决定是否重试
+//!
+//! 平台差异：
+//! - Windows: 使用 `schannel` 或 `openssl` 作为 TLS 后端（由 `reqwest` 特性决定）
+//! - Unix/macOS: 使用系统 `openssl` 或 `rustls`（推荐 `rustls` 特性）
+//!
+//! 测试：
+//! - 客户端构建成功
+//! - User-Agent 格式正确
+//! - 超时配置生效
+
 use anyhow::{Context, Result};
 use reqwest::Client;
 use std::time::Duration;

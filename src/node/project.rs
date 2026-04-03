@@ -1,3 +1,53 @@
+//! Node.js 项目版本解析模块。
+//!
+//! 本模块提供从项目目录中的 `.nvmrc` 文件自动检测 Node.js 版本的功能。
+//! 支持从当前工作目录向上递归查找，直到找到 `.nvmrc` 或到达文件系统根目录。
+//!
+//! 核心函数：
+//! - `resolve_project_version_from_nvmrc()`: 从当前目录解析项目版本
+//! - `resolve_project_version_from(start_dir)`: 从指定起始目录解析项目版本
+//! - `find_nearest_nvmrc(start_dir)`: 向上查找最近的 `.nvmrc` 文件
+//! - `parse_nvmrc_version(content)`: 解析 `.nvmrc` 文件内容，提取版本号
+//!
+//! `.nvmrc` 文件格式：
+//! ```text
+//! v18.17.0      # 精确版本（推荐）
+//! 20.11.1       # 无 v 前缀也支持
+//! ```
+//! 支持注释行（`#` 开头）和空行，会被自动忽略。
+//!
+//! 查找算法：
+//! 1. 从 `start_dir` 开始
+//! 2. 检查当前目录是否存在 `.nvmrc`
+//! 3. 如果不存在，移动到父目录
+//! 4. 重复步骤 2-3，直到找到或到达根目录
+//! 5. 返回找到的第一个 `.nvmrc` 的路径
+//!
+//! 解析规则：
+//! - 读取文件第一行非空非注释内容
+//! - 去除首尾空白字符
+//! - 支持 `v` 前缀（如 `v18.17.0`），会规范化为 `18.17.0`
+//! - 仅接受完整语义化版本号（`X.Y.Z`）
+//!
+//! 错误处理：
+//! - 未找到 `.nvmrc`: 返回 `anyhow::Error`，提示创建文件或直接指定版本
+//! - 文件读取失败: 返回 `std::io::Error`
+//! - 内容为空或无效: 返回 `anyhow::Error`，提示正确格式
+//!
+//! 使用方式：
+//! ```text
+//! meetai node use project
+//! meetai node install project
+//! ```
+//!
+//! 与 node 命令集成：
+//! - `install_node_for_surface` / `use_node_for_surface` 在版本参数为 `project` 时调用 `resolve_project_version_from_nvmrc`
+//! - 解析出的版本会继续走普通 Node.js 安装或切换流程
+//! - `.nvmrc` 内容无效时，错误消息会提示正确格式
+//!
+//! 测试：
+//! - 模块内 `mod tests` 包含版本解析、目录查找、错误处理测试
+
 use anyhow::{Context, Result};
 use std::env;
 use std::fs;

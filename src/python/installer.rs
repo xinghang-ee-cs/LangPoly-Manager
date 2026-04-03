@@ -1,3 +1,59 @@
+//! Python 安装器实现。
+//!
+//! 本模块提供 Python 的自动下载、安装、验证和卸载功能。
+//! 目前主要支持 Windows 平台的自动安装（通过 python.org 安装包），
+//! macOS/Linux 平台仅支持管理已手动安装的版本。
+//!
+//! # 核心功能
+//!
+//! - **版本解析**: 从 python.org 获取可用版本列表，支持 `latest` 特殊标识
+//! - **下载管理**: 从官方源或镜像站下载安装包，支持断点续传和进度显示
+//! - **安装执行**: Windows 上静默运行安装程序，配置安装目录
+//! - **安装验证**: 检查安装目录、可执行文件、版本输出
+//! - **残留清理**: 自动清理不完整的安装残留
+//! - **已有安装导入**: 检测系统已安装的 Python 并导入到 MeetAI 管理
+//!
+//! # 安装流程（Windows）
+//!
+//! ```text
+//! 1. 解析版本（latest → 具体版本号）
+//! 2. 检查是否已安装（避免重复）
+//! 3. 检测系统已有安装（尝试导入）
+//! 4. 下载安装包（.exe）到缓存目录
+//! 5. 执行静默安装（/VERYSILENT /SUPPRESSMSGBOXES）
+//! 6. 验证安装结果（检查 python.exe、版本输出）
+//! 7. 失败时尝试恢复或清理
+//! ```
+//!
+//! # 目录结构
+//!
+//! ```text
+//! {cache_dir}/
+//!   python-3.11.0.exe    # 下载的安装包
+//!
+//! {python_install_dir}/
+//!   python-3.11.0/       # 安装后的版本目录
+//!     python.exe
+//!     Scripts/
+//!     ...
+//! ```
+//!
+//! # 平台差异
+//!
+//! - **Windows**: 完整自动安装流程（下载 → 安装 → 验证）
+//! - **macOS/Linux**: 仅验证版本格式，实际安装需用户手动完成
+//!
+//! # 示例
+//!
+//! ```rust,ignore
+//! use meetai::python::PythonInstaller;
+//!
+//! let installer = PythonInstaller::new()?;
+//! let version = installer.install("3.11.0").await?;
+//! println!("已安装 Python {}", version);
+//! ```
+//!
+
 use crate::config::Config;
 use crate::runtime::common::{RuntimeInstaller, RuntimeUninstaller};
 use crate::utils::downloader::Downloader;

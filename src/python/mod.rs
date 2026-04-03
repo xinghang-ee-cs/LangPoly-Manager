@@ -1,3 +1,53 @@
+//! Python 运行时模块。
+//!
+//! 本模块提供 Python 版本管理、虚拟环境管理和包管理的完整功能。
+//! 是 MeetAI 工具中 Python 支持的主要入口点。
+//!
+//! 子模块：
+//! - `version`: `PythonVersion` 和 `PythonVersionManager` 实现版本管理
+//! - `installer`: `PythonInstaller` 实现下载、安装、验证
+//! - `service`: `PythonService` 实现业务逻辑和命令分发
+//! - `environment`: `VenvManager` 实现虚拟环境管理
+//!
+//! 主要函数：
+//! - `handle_python_command`: 处理 `meetai python <subcommand>` 命令
+//! - `handle_venv_command`: 处理 `meetai venv <subcommand>` 命令
+//!
+//! 公开类型：
+//! - `PythonService`: 主服务，供 CLI 调用
+//! - `PythonVersionManager`: 版本管理器
+//! - `VenvManager`: 虚拟环境管理器
+//! - `PythonInstaller`: 安装器（通常内部使用）
+//!
+//! 命令路由：
+//! | PythonAction | 处理函数 |
+//! |--------------|----------|
+//! | `Install(version)` | `PythonService::install()` |
+//! | `Use(version)` | `PythonService::set_current_version()` |
+//! | `Uninstall(version)` | `PythonService::uninstall()` |
+//! | `List` | `PythonService::list_installed()` |
+//!
+//! | VenvAction | 处理函数 |
+//! |-----------|----------|
+//! | `Create { name, target_dir }` | `VenvManager::create()` |
+//! | `Activate { name }` | `VenvManager::activate()` |
+//! | `List` | `VenvManager::list()` |
+//!
+//! 设计特点：
+//! - 版本号使用自定义 `PythonVersion` 类型，支持比较和显示
+//! - 通过 shims 目录实现版本切换，无需管理员权限
+//! - Windows 平台支持完整自动安装（python.org 安装包）
+//! - macOS/Linux 平台需用户手动安装，仅管理已有版本
+//! - 虚拟环境支持跨平台（PowerShell / shell 激活脚本）
+//!
+//! 与其它模块集成：
+//! - `crate::runtime::handle_runtime_command`: 统一 runtime 命令入口
+//! - `crate::pip::handle_pip_command`: pip 命令依赖 Python 环境
+//! - `crate::quick_install::QuickInstaller`: 一键安装包含 Python
+//!
+//! 测试：
+//! - 模块内 `mod tests` 包含命令处理、错误消息测试
+
 pub mod environment;
 pub mod installer;
 pub mod service;

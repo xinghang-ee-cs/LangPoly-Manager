@@ -1,3 +1,47 @@
+//! Pip 包管理器实现。
+//!
+//! 本模块提供 Python 包管理功能，封装 `pip` 命令的安装、卸载、升级和列表操作。
+//! 通过当前激活的 Python 环境中的 pip 可执行文件执行操作。
+//!
+//! 核心类型：
+//! - `PipManager`: Pip 包管理器，负责包的完整生命周期管理
+//!
+//! 主要功能：
+//! 1. **安装包** (`install`): 从 PyPI 安装指定包及依赖
+//!    - 支持精确版本（如 `"requests==2.28.0"`）
+//!    - 支持版本范围（如 `"django>=4.0"`）
+//!    - 支持 extras（如 `"fastapi[all]"`）
+//! 2. **卸载包** (`uninstall`): 移除已安装的包
+//!    - 自动确认，无需交互
+//!    - 同时移除依赖（如果不再被其他包需要）
+//! 3. **升级包** (`upgrade`): 更新包到最新版本
+//!    - 使用 `--upgrade` 标志
+//!    - 同时升级依赖
+//! 4. **列出包** (`list`): 返回所有已安装包的名称列表
+//!
+//! 执行环境：
+//! - 使用当前激活的 Python 环境中的 `pip` 可执行文件
+//! - 通过 `PythonVersionManager::current_python_executable()` 获取 Python 解释器路径
+//! - Pip 命令格式：`<python_exe> -m pip <subcommand> <args>`
+//!
+//! 进度显示：
+//! - 安装/卸载/升级操作显示 "🌙 月亮" 进度指示器
+//! - 使用 `indicatif::ProgressBar` 实现不确定进度的动画
+//! - 列表操作无进度显示（快速完成）
+//!
+//! 错误处理：
+//! - Python 可执行文件不存在：返回 `anyhow::Error`
+//! - pip 命令执行失败：返回 `anyhow::Error`，包含命令 stderr 输出
+//! - 包不存在（卸载/升级）：返回 `anyhow::Error`，提示包名
+//!
+//! 与 PythonService 集成：
+//! - 通过 `PythonService::handle_pip_command` 暴露给 CLI
+//! - 支持 `pip install`、`pip uninstall`、`pip upgrade`、`pip list` 子命令
+//!
+//! 测试：
+//! - 模块内 `mod tests` 包含命令执行和输出解析测试
+//! - 集成测试验证 pip 与 Python 环境集成
+
 use crate::config::Config;
 use crate::utils::executor::CommandExecutor;
 use crate::utils::progress::moon_spinner_style;
