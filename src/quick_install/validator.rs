@@ -1,3 +1,43 @@
+//! 一键安装验证器模块。
+//!
+//! 本模块提供安装后验证功能，确保所有组件正确安装并可正常使用。
+//! 采用 trait 抽象设计，支持对真实实现和 mock 实现的统一验证。
+//!
+//! 核心类型：
+//! - `QuickInstallValidator`: 验证器主类型，协调各组件验证
+//! - 测试用 Mock 类型：`MockPythonInstaller`、`MockPythonRuntime`、`MockPipManager`、`MockNodeRuntime`、`MockVenvManager`
+//!
+//! 验证流程 (`verify_installation` 方法)：
+//! 1. **验证 Python**: 检查 Python 可执行文件存在，运行 `python --version`
+//! 2. **验证 Pip**: 检查 pip 可执行文件存在，运行 `pip --version`
+//! 3. **验证虚拟环境**: 检查虚拟环境目录和激活脚本存在
+//! 4. **验证 Node.js** (可选): 如果安装了 Node.js，检查 `node --version`
+//! 5. **验证 Java** (可选): 如果安装了 Java，检查 `java -version`
+//! 6. **验证 Go** (可选): 如果安装了 Go，检查 `go version`
+//!
+//! 抽象 trait 设计：
+//! - `CommandExecutorOps`: 命令执行抽象（支持 async）
+//! - `PythonVersionOps`: Python 版本查询抽象
+//! - `NodeVersionOps`: Node.js 版本查询抽象
+//! - `PipVersionOps`: Pip 版本查询抽象
+//! - `VenvManagerOps`: 虚拟环境管理抽象
+//! - `QuickInstallValidatorOps`: 验证器主 trait
+//!
+//! 设计优势：
+//! - 真实实现和 mock 实现共享同一套验证逻辑
+//! - 测试时无需启动真实进程，验证逻辑可复用
+//! - 各组件可独立 mock，便于单元测试
+//!
+//! 错误处理：
+//! - 任何验证失败立即返回 `anyhow::Error`
+//! - 错误消息包含具体失败的组件和原因
+//! - 验证是**幂等**的，可重复执行
+//!
+//! 测试：
+//! - 模块内 `mod tests` 包含完整的 mock 测试框架
+//! - 验证跳过逻辑（`create_venv=false` 时跳过虚拟环境验证）
+//! - 验证各组件错误传播和汇总
+
 use crate::config::Config;
 use crate::node::version::NodeVersionManager;
 use crate::python::version::PythonVersionManager;
@@ -150,7 +190,7 @@ impl QuickInstallValidator {
         // 验证 Node.js（当用户显式请求安装时）
         if config.install_nodejs {
             let node_exe = node_version_manager.current_node_executable(
-                "安装后未检测到已激活的 Node.js 版本，请手动执行: meetai runtime use nodejs <version>",
+                "安装后未检测到已激活的 Node.js 版本，请手动执行: meetai runtime use node <version>",
             )?;
             executor
                 .execute_with_output_async(&node_exe, &["--version"])

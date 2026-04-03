@@ -1,3 +1,67 @@
+//! 一键安装器实现。
+//!
+//! 本模块提供"一键安装"完整流程的编排器，负责串联 Python、pip、Node.js、
+//! 虚拟环境以及安装后验证等步骤。
+//!
+//! 当前行为说明：
+//! - Python: 始终安装或切换到请求版本，并激活为当前全局版本
+//! - pip: 始终安装或升级
+//! - Node.js: 当 `install_nodejs=true` 时安装并激活为当前全局版本
+//! - Java / Go: 当对应标志开启时，仅作为 planned runtime 展示，自动安装尚未开放
+//! - venv: 当 `create_venv=true` 时创建全局虚拟环境，并在项目目录写入 `.venv` 标记与激活脚本
+//!
+//! 核心类型：
+//! - `QuickInstaller`: 主安装器，协调所有子组件的安装流程
+//! - 测试用 Mock 类型：`MockPythonInstaller`、`MockPythonRuntime`、`MockPipManager`、`MockNodeRuntime`、`MockVenvManager`、`MockValidator`
+//!
+//! 主要流程 (`install` 方法)：
+//! 1. **安装 Python**: 始终执行
+//!    - 使用 `PythonInstaller` 安装到 `{app_home}/python/python-<version>`
+//!    - 采纳系统 Python（如果已安装且版本匹配）
+//! 2. **安装/升级 pip**: 始终执行
+//!    - `latest` 时执行升级，否则安装指定版本
+//! 3. **安装 Node.js** (可选): 如果 `install_nodejs=true`
+//!    - 解析版本（如 `latest` / `newest` / `lts` / `project` / 精确版本）
+//!    - 安装后切换为当前全局版本
+//! 4. **处理 Java / Go** (可选)
+//!    - 当前仅保留计划中的运行时版本信息，供摘要和后续流程使用
+//! 5. **创建虚拟环境**: 如果 `create_venv=true`
+//!    - 在 `{app_home}/venvs/<venv_name>` 创建实体目录
+//!    - 在 `<target_dir>` 写入 `.venv` 标记文件和激活脚本（PowerShell / shell）
+//! 6. **验证安装**: 运行 `QuickInstallValidator` 检查所有组件
+//! 7. **打印摘要**: 显示安装路径、版本信息、激活命令
+//!
+//! 目录结构：
+//! ```text
+//! {app_home}/
+//! ├── python/                   # MeetAI 管理的 Python 运行时
+//! ├── nodejs/
+//! │   └── versions/             # MeetAI 管理的 Node.js 运行时（如果启用）
+//! ├── venvs/
+//! │   └── <venv_name>/          # quick-install 创建的虚拟环境实体目录
+//! └── shims/                    # 当前全局版本的命令入口
+//!
+//! <target_dir>/
+//! ├── .venv                     # 指向全局虚拟环境目录的标记文件
+//! ├── activate.ps1             # Windows 激活辅助脚本（如果启用）
+//! └── activate.sh              # Unix 激活辅助脚本（如果启用）
+//! ```
+//!
+//! 错误处理：
+//! - 任何步骤失败都会立即停止并返回 `anyhow::Error`
+//! - 失败时保留所有已安装组件，便于调试和重试
+//! - 错误消息包含网络诊断建议（如需要）
+//!
+//! 进度显示：
+//! - 使用 `indicatif::ProgressBar` 显示 "🌙 月亮" 风格进度条
+//! - 主要步骤显示明确消息（"正在安装 Python..."、"正在创建虚拟环境..."）
+//! - 下载过程显示字节数和速度
+//!
+//! 测试：
+//! - 模块内 `mod tests` 包含完整的 mock 测试框架
+//! - 验证各运行时安装流程、错误传播、跳过逻辑
+//! - 网络故障场景测试（Python 安装失败诊断）
+
 use anyhow::{Context, Result};
 use indicatif::ProgressBar;
 use log::warn;

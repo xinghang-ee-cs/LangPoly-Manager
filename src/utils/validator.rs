@@ -1,3 +1,55 @@
+//! 输入验证器模块。
+//!
+//! 本模块集中封装 CLI 输入参数的格式校验，重点覆盖版本号、包名以及
+//! 可能影响命令执行安全性的 token。
+//!
+//! 核心类型：
+//! - `Validator`: 验证器主类型，封装所有验证方法
+//!
+//! 主要校验能力：
+//! - Python 安装版本：`latest` 或 `X.Y.Z`
+//! - Python / Node.js 已安装版本选择：严格要求 `X.Y.Z`
+//! - Node.js 安装版本：`latest`、`newest`、`lts`、`project` 或 `X.Y.Z`
+//! - Java / Go 安装版本：`latest` 或最多三段数字版本
+//! - pip 包名与精确版本：拒绝空白、控制字符和选项注入形式
+//! - quick-install 中的虚拟环境名称：复用 `validate_package_name()`
+//!
+//! 主要方法：
+//! - `validate_python_install_version()`: 验证 Python 安装请求版本
+//! - `validate_python_selected_version()`: 验证已安装 Python 版本选择
+//! - `validate_node_install_version()`: 验证 Node.js 安装请求版本
+//! - `validate_node_use_version()`: 验证 Node.js 切换请求版本
+//! - `validate_java_install_version()`: 验证 Java 安装请求版本
+//! - `validate_go_install_version()`: 验证 Go 安装请求版本
+//! - `validate_pip_package_name()`: 验证 pip 包名格式
+//! - `validate_pip_pin_version()`: 验证 `name==version` 中的版本片段
+//! - `validate_package_name()`: 验证普通名称 token（如 quick-install 的 venv 名称）
+//!
+//! 设计特点：
+//! - **零状态**: `Validator` 是零大小、无状态类型
+//! - **正则缓存**: 使用 `OnceLock` 缓存编译后的正则表达式，避免重复编译
+//! - **错误详细**: 验证失败返回 `anyhow::Error`，包含具体错误原因和正确格式示例
+//! - **按入口收紧**: 是否允许 `latest`、`lts`、`project` 等特殊 token 由具体方法决定
+//!
+//! 使用示例：
+//! ```rust
+//! use meetai::utils::validator::Validator;
+//!
+//! let validator = Validator::new();
+//! validator.validate_python_install_version("latest")?;
+//! validator.validate_node_install_version("lts")?;
+//! validator.validate_pip_package_name("requests")?;
+//! validator.validate_pip_pin_version("2.31.0")?;
+//! # Ok::<(), anyhow::Error>(())
+//! ```
+//!
+//! 错误处理：
+//! - 格式不匹配：返回 `anyhow::Error`
+//! - 错误消息包含：实际输入、期望格式、允许的字符集
+//!
+//! 测试：
+//! - 模块内 `mod tests` 包含各类验证函数的正负测试用例
+
 use anyhow::{Context, Result};
 use regex::Regex;
 use semver::Version;
@@ -26,6 +78,11 @@ fn re_pip_package_name() -> &'static Regex {
 fn re_pip_pin_version() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| Regex::new(r"^[A-Za-z0-9][A-Za-z0-9._+-]*$").unwrap())
+}
+
+fn re_optional_numeric_version() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"^\d+(\.\d+){0,2}$").unwrap())
 }
 
 /// 验证器
@@ -78,6 +135,16 @@ impl Validator {
     /// 验证 Node.js 已安装版本选择（仅允许 X.Y.Z）。
     pub fn validate_node_selected_version(&self, version: &str) -> Result<()> {
         self.validate_node_version_token(version, &[])
+    }
+
+    /// 验证 Java 安装请求版本（允许 latest 或最多三段数字版本）。
+    pub fn validate_java_install_version(&self, version: &str) -> Result<()> {
+        self.validate_optional_latest_numeric_version("Java", version, "21 / 21.0.2")
+    }
+
+    /// 验证 Go 安装请求版本（允许 latest 或最多三段数字版本）。
+    pub fn validate_go_install_version(&self, version: &str) -> Result<()> {
+        self.validate_optional_latest_numeric_version("Go", version, "1.22 / 1.22.0")
     }
 
     /// 验证 Pip 版本号格式
@@ -215,6 +282,37 @@ impl Validator {
 
         Ok(())
     }
+
+    /// 内部实现：验证允许 latest 的数字版本 token。
+    fn validate_optional_latest_numeric_version(
+        &self,
+        runtime_name: &str,
+        version: &str,
+        example: &str,
+    ) -> Result<()> {
+        if version == "latest" {
+            return Ok(());
+        }
+
+        if version.chars().any(char::is_whitespace) {
+            anyhow::bail!("{} 版本号不能包含空白字符：{}", runtime_name, version);
+        }
+        if version.chars().any(char::is_control) {
+            anyhow::bail!("{} 版本号不能包含控制字符：{}", runtime_name, version);
+        }
+
+        let re = re_optional_numeric_version();
+        if !re.is_match(version) {
+            anyhow::bail!(
+                "{} 版本号格式不正确：{}，请使用 latest 或数字版本，例如: {}",
+                runtime_name,
+                version,
+                example
+            );
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -326,5 +424,33 @@ mod tests {
         assert!(validator.validate_node_selected_version("latest").is_err());
         assert!(validator.validate_node_selected_version("project").is_err());
         assert!(validator.validate_node_selected_version("20.11.1").is_ok());
+    }
+
+    #[test]
+    fn java_install_version_allows_latest_and_numeric_forms() {
+        let validator = Validator::new();
+        assert!(validator.validate_java_install_version("latest").is_ok());
+        assert!(validator.validate_java_install_version("21").is_ok());
+        assert!(validator.validate_java_install_version("21.0.2").is_ok());
+    }
+
+    #[test]
+    fn java_install_version_rejects_suffix_form() {
+        let validator = Validator::new();
+        assert!(validator.validate_java_install_version("21-ea").is_err());
+    }
+
+    #[test]
+    fn go_install_version_allows_latest_and_numeric_forms() {
+        let validator = Validator::new();
+        assert!(validator.validate_go_install_version("latest").is_ok());
+        assert!(validator.validate_go_install_version("1.22").is_ok());
+        assert!(validator.validate_go_install_version("1.22.2").is_ok());
+    }
+
+    #[test]
+    fn go_install_version_rejects_suffix_form() {
+        let validator = Validator::new();
+        assert!(validator.validate_go_install_version("1.22beta1").is_err());
     }
 }
