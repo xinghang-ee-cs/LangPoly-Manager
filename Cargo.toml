@@ -1,6 +1,6 @@
 [package]
 name = "meetai"
-version = "0.1.0"
+version = "0.3.0"
 edition = "2021"
 authors = ["MeetAI Club <opensource@meetai.club>"]
 description = "MeetAI multi-runtime CLI for one-click installation and unified version management"
