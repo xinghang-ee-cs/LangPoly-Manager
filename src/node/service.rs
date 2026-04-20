@@ -203,11 +203,11 @@ pub(crate) async fn uninstall_node_for_surface(
 fn build_install_failure_message(surface: NodeCommandSurface, version: &str) -> String {
     match surface {
         NodeCommandSurface::Node => format!(
-            "Node.js 安装失败（请求版本: {}）。\n若为 Windows，请检查网络后重试；macOS/Linux 当前仅支持手动安装后切换。\n下一步你可以执行：\n  meetai node list\n  meetai runtime list node",
+            "Node.js 安装失败（请求版本: {}）。\nWindows/Linux 支持自动下载安装；如果当前平台暂不支持，请先手动安装后切换。\n下一步你可以执行：\n  meetai node available\n  meetai node list\n  meetai runtime list node",
             version
         ),
         NodeCommandSurface::Runtime => format!(
-            "Node.js 安装失败（请求版本: {}）。\n若为 Windows，请检查网络后重试；macOS/Linux 当前仅支持手动安装后切换。\n下一步你可以执行：\n  meetai runtime list node\n  meetai node list",
+            "Node.js 安装失败（请求版本: {}）。\nWindows/Linux 支持自动下载安装；如果当前平台暂不支持，请先手动安装后切换。\n下一步你可以执行：\n  meetai node available\n  meetai runtime list node\n  meetai node list",
             version
         ),
     }

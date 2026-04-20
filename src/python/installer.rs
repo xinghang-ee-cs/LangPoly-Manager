@@ -1,8 +1,8 @@
 //! Python 安装器实现。
 //!
 //! 本模块提供 Python 的自动下载、安装、验证和卸载功能。
-//! 目前主要支持 Windows 平台的自动安装（通过 python.org 安装包），
-//! macOS/Linux 平台仅支持管理已手动安装的版本。
+//! 目前 Windows 平台支持自动下载官方安装包，Linux/macOS 支持采纳系统已安装的
+//! Python 到 MeetAI 管理目录。
 //!
 //! # 核心功能
 //!
@@ -41,7 +41,7 @@
 //! # 平台差异
 //!
 //! - **Windows**: 完整自动安装流程（下载 → 安装 → 验证）
-//! - **macOS/Linux**: 仅验证版本格式，实际安装需用户手动完成
+//! - **Linux/macOS**: 采纳系统已安装的匹配版本，不执行 root 级安装或源码编译
 //!
 //! # 示例
 //!
@@ -133,8 +133,8 @@ impl PythonInstaller {
     }
 
     /// 安装指定版本的 Python。
-    /// `version` 支持 `latest` 或具体版本号；非 Windows 平台不执行自动下载安装，
-    /// 当 `latest` 且 MeetAI 管理目录存在已安装版本时，会回退使用其中最高稳定版本。
+    /// `version` 支持 `latest` 或具体版本号；非 Windows 平台不执行下载安装，
+    /// 而是优先使用 MeetAI 已管理版本，或采纳系统已安装的匹配 Python。
     pub async fn install(&self, version: &str) -> Result<String> {
         let validator = Validator::new();
         validator.validate_python_install_version(version)?;
@@ -155,14 +155,20 @@ impl PythonInstaller {
         let resolved_version = if version == "latest" && !cfg!(windows) {
             if let Some(local_latest) = self.get_latest_installed_python_version()? {
                 progress.println(format!(
-                    "当前平台暂不支持自动解析/安装 latest，回退到 MeetAI 已管理版本 {}。",
+                    "当前平台不下载 Python 安装包，回退到 MeetAI 已管理版本 {}。",
                     local_latest
                 ));
                 local_latest
+            } else if let Some(system_latest) = self.get_latest_system_python_version()? {
+                progress.println(format!(
+                    "检测到系统 Python {}，将注册到 MeetAI 管理目录。",
+                    system_latest
+                ));
+                system_latest
             } else {
-                progress.abandon_with_message("❌ 当前平台暂不支持 latest 自动安装");
+                progress.abandon_with_message("❌ 未找到可采纳的系统 Python");
                 anyhow::bail!(
-                    "当前平台暂不支持自动下载安装 Python（我们正在努力支持）。\n\n你可以：\n  1. 先手动安装 Python（访问 python.org）\n  2. 然后用 MeetAI 管理：meetai runtime use python <version>\n  3. 或查看已有版本：meetai runtime list python"
+                    "当前平台不执行 Python 下载安装，且未找到可采纳的系统 Python。\n\n你可以：\n  1. 先通过系统包管理器安装 Python（例如 apt/dnf/pacman/brew）\n  2. 然后执行：meetai python install <version>\n  3. 或查看已有版本：meetai runtime list python"
                 );
             }
         } else {
@@ -202,30 +208,16 @@ impl PythonInstaller {
             return Ok(resolved_version);
         }
 
-        if !cfg!(windows) {
-            progress.abandon_with_message(format!(
-                "❌ 当前平台暂不支持自动安装 Python {}",
-                resolved_version
-            ));
-            anyhow::bail!(
-                "当前平台暂不支持自动下载安装 Python {}（我们正在努力支持）。\n\n你可以：\n  1. 先手动安装 Python（访问 python.org）\n  2. 然后用 MeetAI 管理：meetai runtime use python <version>\n  3. 或查看已有版本：meetai runtime list python",
-                resolved_version,
-            );
-        }
-
         progress.set_position(18);
         progress.set_message(format!(
             "🔍 正在检测系统已有 Python {} 安装...",
             resolved_version
         ));
-        if cfg!(windows)
-            && self
-                .try_adopt_existing_installation_with_progress(&resolved_version, Some(&progress))?
-        {
+        if self.try_adopt_existing_installation_with_progress(&resolved_version, Some(&progress))? {
             progress.set_position(100);
-            progress.finish_with_message(format!("✅ Python {} 导入完成", resolved_version));
+            progress.finish_with_message(format!("✅ Python {} 注册完成", resolved_version));
             println!(
-                "Python {} 已导入到 MeetAI 管理目录，无需重复安装。",
+                "Python {} 已注册到 MeetAI 管理目录，无需重复安装。",
                 resolved_version
             );
             println!("下一步你可以执行：");
@@ -235,6 +227,17 @@ impl PythonInstaller {
             );
             println!("  meetai python list      # 查看所有已安装版本");
             return Ok(resolved_version);
+        }
+
+        if !cfg!(windows) {
+            progress
+                .abandon_with_message(format!("❌ 未找到可采纳的系统 Python {}", resolved_version));
+            anyhow::bail!(
+                "当前平台不执行 Python 下载安装，且未找到系统中已安装的 Python {}。\n\n你可以：\n  1. 先通过系统包管理器安装 Python {}\n  2. 然后重试：meetai python install {}\n  3. 或查看已有版本：meetai runtime list python",
+                resolved_version,
+                resolved_version,
+                resolved_version,
+            );
         }
 
         progress.set_position(25);
@@ -816,6 +819,91 @@ mod tests {
     }
 
     #[test]
+    fn parse_python_version_from_output_extracts_standard_version() -> Result<()> {
+        let version = PythonInstaller::parse_python_version_from_output("Python 3.13.7\n")?;
+        assert_eq!(version.map(|v| v.to_string()).as_deref(), Some("3.13.7"));
+
+        let version = PythonInstaller::parse_python_version_from_output("CPython 3.13.7\n")?;
+        assert!(version.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn build_unix_python_executable_candidates_prioritizes_requested_version() {
+        let candidates =
+            PythonInstaller::build_unix_python_executable_candidates(Some((3, 13)), Some("3.13.7"));
+        let candidate_strings: Vec<String> = candidates
+            .iter()
+            .map(|path| path.to_string_lossy().to_string())
+            .collect();
+
+        assert!(
+            candidate_strings
+                .iter()
+                .any(|path| path.ends_with("python3.13.7")),
+            "exact version candidate should be present: {candidate_strings:?}"
+        );
+        assert!(
+            candidate_strings
+                .iter()
+                .any(|path| path.ends_with("python3.13")),
+            "major.minor candidate should be present: {candidate_strings:?}"
+        );
+        assert!(
+            candidate_strings
+                .iter()
+                .any(|path| path.ends_with("python3")),
+            "python3 fallback candidate should be present: {candidate_strings:?}"
+        );
+        assert!(
+            candidate_strings
+                .iter()
+                .all(|path| !path.contains(".venv") && !path.contains("/custom/")),
+            "candidate list should stay within trusted system roots: {candidate_strings:?}"
+        );
+    }
+
+    #[test]
+    fn trusted_unix_python_executable_rejects_path_only_directories() {
+        assert!(
+            PythonInstaller::is_trusted_unix_python_executable(Path::new("/usr/bin/python3")),
+            "well-known system root should be trusted"
+        );
+        assert!(
+            !PythonInstaller::is_trusted_unix_python_executable(Path::new(
+                "/tmp/project/.venv/bin/python"
+            )),
+            "project-local virtualenv should not be trusted as a system Python"
+        );
+        assert!(
+            !PythonInstaller::is_trusted_unix_python_executable(Path::new("/custom/bin/python3")),
+            "arbitrary PATH-like directories should not be trusted"
+        );
+    }
+
+    #[test]
+    fn write_unix_adopted_python_launcher_escapes_path_and_is_executable() -> Result<()> {
+        let temp = tempdir()?;
+        let launcher_path = temp.path().join("python");
+        let python_exe = temp.path().join("python with 'quote'");
+
+        PythonInstaller::write_unix_adopted_python_launcher(&launcher_path, &python_exe)?;
+        let script = std::fs::read_to_string(&launcher_path)?;
+        assert!(script.contains("MEETAI_ADOPTED_PYTHON="));
+        assert!(script.contains("'\"'\"'quote'"));
+        assert!(script.contains("exec \"$MEETAI_ADOPTED_PYTHON\" \"$@\""));
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&launcher_path)?.permissions().mode();
+            assert_eq!(mode & 0o111, 0o111);
+        }
+
+        Ok(())
+    }
+
+    #[test]
     fn trusted_python_signer_subject_requires_exact_cn() {
         assert!(PythonInstaller::is_trusted_python_signer_subject(
             "CN=Python Software Foundation, O=Python Software Foundation, C=US"
@@ -904,6 +992,44 @@ mod tests {
         let roots = PythonInstaller::build_trusted_python_install_roots(None, None, None, None);
         assert!(roots.contains(&PathBuf::from(WINDOWS_PROGRAM_FILES_DEFAULT)));
         assert!(roots.contains(&PathBuf::from(WINDOWS_PROGRAM_FILES_X86_DEFAULT)));
+    }
+
+    #[test]
+    fn build_windows_py_launcher_candidates_includes_standard_and_launcher_locations() {
+        let candidates = PythonInstaller::build_windows_py_launcher_candidates(
+            PathBuf::from(r"C:\Windows"),
+            Some(PathBuf::from(r"C:\Users\Alice\AppData\Local")),
+        );
+
+        assert_eq!(candidates[0], PathBuf::from(r"C:\Windows\py.exe"));
+        assert_eq!(candidates[1], PathBuf::from(r"C:\Windows\System32\py.exe"));
+        assert!(
+            candidates.contains(&PathBuf::from(
+                r"C:\Users\Alice\AppData\Local\Programs\Python\Launcher\py.exe"
+            )),
+            "LOCALAPPDATA launcher path should be included"
+        );
+    }
+
+    #[test]
+    fn build_windows_py_launcher_candidates_deduplicates_equivalent_entries() {
+        let candidates = PythonInstaller::build_windows_py_launcher_candidates(
+            PathBuf::from(r"C:\Windows"),
+            Some(PathBuf::from(r"C:\Users\Alice\AppData\Local")),
+        );
+
+        let launcher_count = candidates
+            .iter()
+            .filter(|path| {
+                path.to_string_lossy().eq_ignore_ascii_case(
+                    r"C:\Users\Alice\AppData\Local\Programs\Python\Launcher\py.exe",
+                )
+            })
+            .count();
+        assert_eq!(
+            launcher_count, 1,
+            "equivalent launcher candidates should be deduplicated"
+        );
     }
 
     #[test]
@@ -1041,9 +1167,13 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(not(windows))]
     #[tokio::test]
-    async fn install_latest_without_local_version_fails_fast_on_non_windows() -> Result<()> {
+    async fn install_latest_without_local_version_reports_system_python_guidance_on_non_windows(
+    ) -> Result<()> {
+        if cfg!(windows) {
+            return Ok(());
+        }
+
         let temp = tempdir()?;
         let installer = make_installer(temp.path())?;
 
@@ -1052,8 +1182,7 @@ mod tests {
             .await
             .expect_err("non-windows latest install should fail without local versions");
         assert!(
-            err.to_string()
-                .contains("当前平台暂不支持自动下载安装 Python"),
+            err.to_string().contains("当前平台不执行 Python 下载安装"),
             "unexpected error: {err:#}"
         );
 

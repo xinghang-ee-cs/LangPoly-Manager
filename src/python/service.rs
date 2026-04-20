@@ -111,7 +111,7 @@ fn build_install_failure_message(surface: PythonCommandSurface, version: &str) -
                 )
             } else {
                 format!(
-                    "Python 安装失败（请求版本: {}）。\n当前平台暂不支持自动安装。\n下一步你可以执行：\n  meetai python list\n  meetai runtime list python\n  meetai runtime use python <version>",
+                    "Python 安装失败（请求版本: {}）。\n当前平台不下载 Python 安装包，会尝试采纳系统已安装版本。\n下一步你可以执行：\n  meetai python list\n  meetai python install <version>\n  meetai runtime list python",
                     version
                 )
             }
@@ -124,7 +124,7 @@ fn build_install_failure_message(surface: PythonCommandSurface, version: &str) -
                 )
             } else {
                 format!(
-                    "Python 安装失败（请求版本: {}）。\n当前平台暂不支持自动安装。\n下一步你可以执行：\n  meetai runtime list python\n  meetai runtime use python <version>",
+                    "Python 安装失败（请求版本: {}）。\n当前平台不下载 Python 安装包，会尝试采纳系统已安装版本。\n下一步你可以执行：\n  meetai runtime list python\n  meetai python install <version>\n  meetai runtime use python <version>",
                     version
                 )
             }

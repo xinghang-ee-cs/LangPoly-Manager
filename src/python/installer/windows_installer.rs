@@ -1,53 +1,19 @@
 //! Python 安装器的 Windows 平台专用实现。
 //!
-//! 本模块处理 Windows 系统上 Python 安装器的执行、签名验证和目录复制。
-//! 所有函数仅在 `cfg(windows)` 下编译，其他平台为空实现或跳过。
+//! 本模块处理 Windows 上的安装包签名校验、静默安装，以及对系统 Python/
+//! `py.exe` 启动器的受信任发现逻辑。
 //!
-//! 主要函数：
-//! - `install_python`: Windows 平台 Python 安装主流程
-//! - `verify_windows_installer_signature`: 验证安装程序 Authenticode 签名
-//! - `copy_directory_contents`: 从安装程序提取目录复制到目标位置
-//! - `windows_platform_token`: 返回 Windows 平台标识符（`"windows"`）
-//! - `build_trusted_python_install_roots`: 构建受信任的 Python 安装根目录列表
+//! 当前安装流程：
+//! 1. 校验安装包 Authenticode 签名
+//! 2. 执行 `installer.exe /quiet InstallAllUsers=0 TargetDir=<dir>` 静默安装
+//! 3. 验证目标目录中的 Python 可执行文件与版本输出
 //!
-//! Windows 安装流程：
-//! 1. **下载安装程序** (`.exe` 或 `.msi`)
-//! 2. **验证签名** (可选，通过 `verify_windows_installer_signature`)
-//!    - 检查签名是否存在
-//!    - 验证发布者是否为 "Python Software Foundation"
-//!    - 时间戳验证（确保签名在有效期内）
-//! 3. **静默安装**：执行 `installer.exe /quiet InstallAllUsers=0 TargetDir=<dir>`
-//!    - `/quiet`: 无界面安装
-//!    - `InstallAllUsers=0`: 仅当前用户
-//!    - `TargetDir`: 指定安装目录
-//! 4. **目录复制**：将安装内容从临时目录复制到 `<app_home>/versions/<version>`
-//! 5. **清理**：删除临时安装文件和安装程序
+//! 与系统 Python 发现相关的辅助逻辑只信任受控路径，例如：
+//! - `C:\Windows\py.exe`
+//! - `C:\Windows\System32\py.exe`
+//! - `%LOCALAPPDATA%\Programs\Python\Launcher\py.exe`
 //!
-//! 信任的 Python 安装根目录（按优先级）：
-//! 1. `%LOCALAPPDATA%\Programs\Python\` (用户安装，推荐)
-//! 2. `%PROGRAMFILES%\Python\` (系统安装)
-//! 3. `%PROGRAMFILES(x86)%\Python\` (32位系统)
-//! 4. `C:\Python<version>\` (传统位置)
-//!
-//! 安全考虑：
-//! - 仅当 `Config::strict_verification` 启用时验证签名
-//! - 未签名或签名不匹配的安装程序将被拒绝
-//! - 支持通过环境变量 `PYTHON_INSTALL_ROOTS` 自定义信任目录
-//!
-//! 错误处理：
-//! - 签名验证失败：返回 `SignatureVerificationError`
-//! - 安装程序执行失败：返回 `anyhow::Error`，包含命令输出
-//! - 目录复制失败：返回 `std::io::Error`，触发清理
-//!
-//! 平台差异：
-//! - 本模块所有函数仅在 Windows 上编译，Unix 平台通过空宏或条件编译跳过
-//! - 使用 Windows API 获取特殊目录（`%APPDATA%`、`%PROGRAMFILES%` 等）
-//! - 路径分隔符使用 `\`，但代码中统一使用 `/` 通过 `PathBuf` 处理
-//!
-//! 测试：
-//! - 签名验证测试：检查 CN=Python Software Foundation
-//! - 路径解析测试：环境变量覆盖、默认值回退
-//! - 目录复制测试：保留内容、无额外根目录层
+//! 这些约束用于减少从 PATH 执行未知 `py.exe` 带来的风险。
 
 use super::*;
 
@@ -346,13 +312,47 @@ if ($null -ne $sig.SignerCertificate) {
     }
 
     pub(super) fn windows_py_launcher_candidates() -> Vec<PathBuf> {
-        vec![Self::windows_system_root().join("py.exe")]
+        Self::build_windows_py_launcher_candidates(
+            Self::windows_system_root(),
+            Self::env_path_var("LOCALAPPDATA"),
+        )
     }
 
     pub(super) fn find_windows_py_launcher() -> Option<PathBuf> {
         Self::windows_py_launcher_candidates()
             .into_iter()
             .find(|candidate| candidate.exists())
+    }
+
+    pub(super) fn build_windows_py_launcher_candidates(
+        system_root: PathBuf,
+        local_app_data: Option<PathBuf>,
+    ) -> Vec<PathBuf> {
+        let mut candidates = Vec::<PathBuf>::new();
+
+        candidates.push(system_root.join("py.exe"));
+        candidates.push(system_root.join("System32").join("py.exe"));
+
+        if let Some(local_app_data) = local_app_data {
+            candidates.push(
+                local_app_data
+                    .join("Programs")
+                    .join("Python")
+                    .join("Launcher")
+                    .join("py.exe"),
+            );
+        }
+
+        let mut dedup = std::collections::HashSet::<String>::new();
+        candidates.retain(|path| {
+            dedup.insert(
+                path.to_string_lossy()
+                    .replace('/', "\\")
+                    .trim_end_matches('\\')
+                    .to_ascii_lowercase(),
+            )
+        });
+        candidates
     }
 
     pub(super) fn trusted_python_install_roots() -> Vec<PathBuf> {

@@ -82,7 +82,7 @@ pub async fn handle_node_command(args: NodeArgs) -> Result<()> {
                 println!("当前还没有安装任何 Node.js 版本。");
                 println!("下一步你可以执行：");
                 println!("  meetai node available          # 查看可安装版本（含 LTS）");
-                if cfg!(windows) {
+                if installer::NodeInstaller::supports_auto_install_on_current_platform() {
                     println!("  meetai node install lts        # 安装最新 LTS");
                 }
             } else {
@@ -116,11 +116,12 @@ pub async fn handle_node_command(args: NodeArgs) -> Result<()> {
                 }
             }
             println!("下一步你可以执行：");
-            if cfg!(windows) {
+            if installer::NodeInstaller::supports_auto_install_on_current_platform() {
                 println!("  meetai node install lts            # 安装最新 LTS");
                 println!("  meetai node install <version>      # 安装指定版本");
                 println!("  meetai node install project        # 按 .nvmrc 安装项目版本");
             } else {
+                println!("  meetai node list                   # 查看 MeetAI 已管理版本");
                 println!("  meetai node use <version>          # 切换到已安装版本");
             }
         }

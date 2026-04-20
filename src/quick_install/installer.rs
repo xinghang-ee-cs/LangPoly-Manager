@@ -407,7 +407,7 @@ impl QuickInstaller {
         let platform_guidance = if cfg!(windows) {
             "  - meetai runtime install python <version>\n  - meetai python install <version>\n  - meetai python list".to_string()
         } else {
-            "  - meetai runtime list python\n  - meetai runtime use python <version>".to_string()
+            "  - meetai python install <version>\n  - meetai runtime list python\n  - meetai runtime use python <version>".to_string()
         };
         let mut message = format!(
             "{}。\n参考命令：\n  - meetai quick-install --python-version {} --pip-version {}\n{}",
@@ -434,7 +434,7 @@ impl QuickInstaller {
             )
         } else {
             format!(
-                "Python {} 安装失败（quick-install）。\n当前平台暂不支持自动安装。\n参考命令：\n  - meetai runtime list python\n  - meetai runtime use python <version>\n  - meetai quick-install --python-version {}\n{}",
+                "Python {} 安装失败（quick-install）。\n当前平台不下载 Python 安装包，会尝试采纳系统已安装版本。\n参考命令：\n  - meetai python install <version>\n  - meetai runtime list python\n  - meetai runtime use python <version>\n  - meetai quick-install --python-version {}\n{}",
                 version,
                 config.python_version,
                 network_diagnostic_tips()
@@ -915,8 +915,12 @@ mod tests {
             );
         } else {
             assert!(
-                message.contains("当前平台暂不支持自动安装"),
-                "error should explain platform limitation on non-Windows, got: {message}"
+                message.contains("当前平台不下载 Python 安装包"),
+                "error should explain Python package handling on non-Windows, got: {message}"
+            );
+            assert!(
+                message.contains("meetai python install <version>"),
+                "error should include python adoption guidance on non-Windows, got: {message}"
             );
             assert!(
                 message.contains("meetai runtime list python"),
@@ -929,10 +933,6 @@ mod tests {
             assert!(
                 !message.contains("meetai runtime install python"),
                 "non-Windows guidance should not suggest unsupported runtime install, got: {message}"
-            );
-            assert!(
-                !message.contains("meetai python install"),
-                "non-Windows guidance should not suggest unsupported python install, got: {message}"
             );
         }
 

@@ -45,6 +45,7 @@ use anyhow::{bail, Result};
 pub mod common;
 
 use crate::cli::{RuntimeAction, RuntimeArgs, RuntimeType};
+use crate::node::installer::NodeInstaller;
 use crate::node::{
     install_node_for_surface, uninstall_node_for_surface, use_node_for_surface, NodeCommandSurface,
     NodeService,
@@ -91,9 +92,9 @@ fn list_runtime_versions(runtime: RuntimeType) -> Result<()> {
                     println!("  meetai runtime install python latest   # 安装最新稳定版");
                     println!("  meetai python install <version>        # 安装指定版本");
                 } else {
-                    println!("  当前平台暂不支持自动安装。");
+                    println!("  meetai runtime install python latest   # 采纳系统 Python");
+                    println!("  meetai python install <version>        # 采纳指定系统版本");
                     println!("  meetai runtime list python             # 查看 MeetAI 已管理版本");
-                    println!("  meetai runtime use python <version>    # 切换到已管理版本");
                 }
             } else {
                 println!(
@@ -116,10 +117,10 @@ fn list_runtime_versions(runtime: RuntimeType) -> Result<()> {
             if versions.is_empty() {
                 println!("还没有安装 {}，让我们开始吧！", runtime.display_name());
                 println!("下一步你可以执行：");
-                if cfg!(windows) {
+                if NodeInstaller::supports_auto_install_on_current_platform() {
                     println!("  meetai runtime install node lts        # 安装最新 LTS");
                 } else {
-                    println!("  当前平台暂不支持自动安装。");
+                    println!("  当前平台暂不支持 Node.js 自动下载安装。");
                     println!("  meetai runtime use node <version>      # 切换到已管理版本");
                 }
                 println!("  meetai node list                       # Node.js 专项管理");
@@ -213,15 +214,15 @@ async fn uninstall_runtime(runtime: RuntimeType, version: &str) -> Result<()> {
 
 fn print_supported_runtime_matrix() {
     println!("MeetAI 运行时管理支持情况：");
-    println!("  ✅ Python   已支持（安装 / 切换 / 卸载）");
-    println!("  ✅ Node.js  已支持（Windows：安装 / 切换 / 卸载）");
+    println!("  ✅ Python   已支持（Windows 下载；Linux/macOS 采纳系统版本；切换 / 卸载）");
+    println!("  ✅ Node.js  已支持（Windows/Linux x64/arm64 下载；切换 / 卸载）");
     println!("  🔜 Java     即将开放");
     println!("  🔜 Go       即将开放");
     println!();
     if cfg!(windows) {
         println!("  meetai runtime install python latest   # 立即安装 Python");
     } else {
-        println!("  meetai runtime list python             # 查看 MeetAI 已管理版本");
+        println!("  meetai runtime install python latest   # 采纳系统 Python");
     }
 }
 

@@ -20,11 +20,11 @@
 //! 目录结构：
 //! ```text
 //! <app_home>/
-//! ├── versions/           # 各版本安装目录
-//! │   ├── 3.9.13/
+//! ├── python/             # 各版本安装目录
+//! │   ├── python-3.9.13/
 //! │   │   └── python.exe # Windows
 //! │   │   └── bin/python # Unix
-//! │   └── 3.10.5/
+//! │   └── python-3.10.5/
 //! └── shims/             # 版本选择器脚本
 //!     └── python         # 指向当前版本的 shim
 //! ```
@@ -95,11 +95,30 @@ pub struct PythonVersionManager {
     config: Config,
 }
 
+/// 根据当前配置重建或清理 Python shims，确保它们与已修复的配置状态一致。
+pub(crate) fn sync_python_shims_for_config(config: &Config) -> Result<()> {
+    let shims_dir =
+        PythonVersionManager::shims_dir_from_python_install_dir(&config.python_install_dir)?;
+    let Some(version) = config.current_python_version.as_deref() else {
+        return PythonVersionManager::remove_python_shims(&shims_dir);
+    };
+
+    let python_exe = PythonVersionManager::python_executable_in_dir(
+        &config.python_install_dir.join(format!("python-{version}")),
+    );
+    if !python_exe.exists() {
+        return PythonVersionManager::remove_python_shims(&shims_dir);
+    }
+
+    PythonVersionManager::refresh_python_shims_at_dir(&shims_dir, &python_exe)
+}
+
 impl PythonVersionManager {
     /// 创建 Python 版本管理器，并确保安装/缓存目录已初始化。
     pub fn new() -> Result<Self> {
         let config = Config::load()?;
         config.ensure_dirs()?;
+        sync_python_shims_for_config(&config)?;
         Ok(Self { config })
     }
 
@@ -115,20 +134,8 @@ impl PythonVersionManager {
             let entry = entry?;
             let path = entry.path();
 
-            if path.is_dir() {
-                if let Some(name) = path.file_name() {
-                    if let Some(version_str) = name.to_str() {
-                        if version_str.starts_with("python-") {
-                            if let Some(version) = version_str.strip_prefix("python-") {
-                                if let Ok(py_version) =
-                                    PythonVersion::from_string(version, path.clone())
-                                {
-                                    versions.push(py_version);
-                                }
-                            }
-                        }
-                    }
-                }
+            if let Some(py_version) = Self::installed_version_from_dir(&path) {
+                versions.push(py_version);
             }
         }
 
@@ -210,12 +217,7 @@ impl PythonVersionManager {
 
     /// 获取 shim 目录路径
     pub fn shims_dir(&self) -> Result<PathBuf> {
-        let app_home = self
-            .config
-            .python_install_dir
-            .parent()
-            .context("Failed to derive MeetAI app home directory from python_install_dir")?;
-        Ok(app_home.join("shims"))
+        Self::shims_dir_from_python_install_dir(&self.config.python_install_dir)
     }
 
     /// 检查 shim 目录是否已在当前 PATH
@@ -261,20 +263,67 @@ impl PythonVersionManager {
         }
     }
 
+    fn shims_dir_from_python_install_dir(python_install_dir: &Path) -> Result<PathBuf> {
+        let app_home = python_install_dir
+            .parent()
+            .context("Failed to derive MeetAI app home directory from python_install_dir")?;
+        Ok(app_home.join("shims"))
+    }
+
+    fn installed_version_from_dir(install_dir: &Path) -> Option<PythonVersion> {
+        if !install_dir.is_dir() {
+            return None;
+        }
+
+        let version = install_dir
+            .file_name()
+            .and_then(|name| name.to_str())
+            .and_then(|name| name.strip_prefix("python-"))?;
+        let python_exe = Self::python_executable_in_dir(install_dir);
+        if !python_exe.exists() {
+            return None;
+        }
+
+        PythonVersion::from_string(version, install_dir.to_path_buf()).ok()
+    }
+
     fn refresh_python_shims(&self, python_exe: &Path) -> Result<()> {
         let shims_dir = self.shims_dir()?;
-        fs::create_dir_all(&shims_dir).with_context(|| {
+        Self::refresh_python_shims_at_dir(&shims_dir, python_exe)
+    }
+
+    fn refresh_python_shims_at_dir(shims_dir: &Path, python_exe: &Path) -> Result<()> {
+        fs::create_dir_all(shims_dir).with_context(|| {
             format!("Failed to create shims directory: {}", shims_dir.display())
         })?;
 
         if cfg!(windows) {
-            Self::write_windows_python_shim(&shims_dir, "python.cmd", python_exe, false)?;
-            Self::write_windows_python_shim(&shims_dir, "python3.cmd", python_exe, false)?;
-            Self::write_windows_python_shim(&shims_dir, "pip.cmd", python_exe, true)?;
+            Self::write_windows_python_shim(shims_dir, "python.cmd", python_exe, false)?;
+            Self::write_windows_python_shim(shims_dir, "python3.cmd", python_exe, false)?;
+            Self::write_windows_python_shim(shims_dir, "pip.cmd", python_exe, true)?;
         } else {
-            Self::write_unix_python_shim(&shims_dir, "python", python_exe, false)?;
-            Self::write_unix_python_shim(&shims_dir, "python3", python_exe, false)?;
-            Self::write_unix_python_shim(&shims_dir, "pip", python_exe, true)?;
+            Self::write_unix_python_shim(shims_dir, "python", python_exe, false)?;
+            Self::write_unix_python_shim(shims_dir, "python3", python_exe, false)?;
+            Self::write_unix_python_shim(shims_dir, "pip", python_exe, true)?;
+        }
+
+        Ok(())
+    }
+
+    fn remove_python_shims(shims_dir: &Path) -> Result<()> {
+        let shim_names: &[&str] = if cfg!(windows) {
+            &["python.cmd", "python3.cmd", "pip.cmd"]
+        } else {
+            &["python", "python3", "pip"]
+        };
+
+        for shim_name in shim_names {
+            let shim_path = shims_dir.join(shim_name);
+            if !shim_path.exists() {
+                continue;
+            }
+            fs::remove_file(&shim_path)
+                .with_context(|| format!("Failed to remove shim file: {}", shim_path.display()))?;
         }
 
         Ok(())
@@ -528,7 +577,7 @@ impl VersionManager for PythonVersionManager {
 
 #[cfg(test)]
 mod tests {
-    use super::PythonVersionManager;
+    use super::{sync_python_shims_for_config, PythonVersionManager};
     use crate::config::Config;
     use crate::runtime::common::VersionManager;
     use std::fs;
@@ -544,6 +593,34 @@ mod tests {
         };
         config.ensure_dirs()?;
         Ok(PythonVersionManager { config })
+    }
+
+    fn make_config(root: &Path, current_python_version: Option<String>) -> anyhow::Result<Config> {
+        let config = Config {
+            python_install_dir: root.join("python"),
+            venv_dir: root.join("venvs"),
+            cache_dir: root.join("cache"),
+            current_python_version,
+        };
+        config.ensure_dirs()?;
+        Ok(config)
+    }
+
+    fn create_fake_python_executable(install_dir: &Path) -> anyhow::Result<PathBuf> {
+        let python_exe = PythonVersionManager::python_executable_in_dir(install_dir);
+        if let Some(parent) = python_exe.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&python_exe, b"fake-python")?;
+        Ok(python_exe)
+    }
+
+    fn platform_python_shim_names() -> &'static [&'static str] {
+        if cfg!(windows) {
+            &["python.cmd", "python3.cmd", "pip.cmd"]
+        } else {
+            &["python", "python3", "pip"]
+        }
     }
 
     #[test]
@@ -596,6 +673,10 @@ mod tests {
 
         let install_dir = temp.path().join("python").join("python-3.13.2");
         fs::create_dir_all(&install_dir)?;
+        fs::write(
+            PythonVersionManager::python_executable_in_dir(&install_dir),
+            b"fake-python",
+        )?;
 
         let versions = manager.list_installed()?;
         assert_eq!(versions, vec!["3.13.2".to_string()]);
@@ -608,6 +689,75 @@ mod tests {
                 .contains("找不到已安装的 Python not-a-version 版本"),
             "error should come from inherent implementation: {err}"
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn sync_python_shims_for_config_rebuilds_shims_for_current_version() -> anyhow::Result<()> {
+        let temp = tempdir()?;
+        let config = make_config(temp.path(), Some("3.13.2".to_string()))?;
+        let install_dir = config.python_install_dir.join("python-3.13.2");
+        let python_exe = create_fake_python_executable(&install_dir)?;
+
+        sync_python_shims_for_config(&config)?;
+
+        let shims_dir = temp.path().join("shims");
+        for shim_name in platform_python_shim_names() {
+            let shim_path = shims_dir.join(shim_name);
+            let script = fs::read_to_string(&shim_path)?;
+            assert!(
+                script.contains(&python_exe.display().to_string()),
+                "shim should target the configured Python executable: {}",
+                shim_path.display()
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn sync_python_shims_for_config_removes_managed_shims_when_no_current_version(
+    ) -> anyhow::Result<()> {
+        let temp = tempdir()?;
+        let config = make_config(temp.path(), None)?;
+        let shims_dir = temp.path().join("shims");
+
+        for shim_name in platform_python_shim_names() {
+            fs::write(shims_dir.join(shim_name), b"stale-shim")?;
+        }
+        let unrelated_shim = shims_dir.join("unrelated");
+        fs::write(&unrelated_shim, b"keep-me")?;
+
+        sync_python_shims_for_config(&config)?;
+
+        for shim_name in platform_python_shim_names() {
+            assert!(!shims_dir.join(shim_name).exists());
+        }
+        assert!(unrelated_shim.exists());
+
+        Ok(())
+    }
+
+    #[test]
+    fn list_installed_skips_partial_install_without_python_executable() -> anyhow::Result<()> {
+        let temp = tempdir()?;
+        let manager = make_manager(temp.path())?;
+
+        let healthy_dir = temp.path().join("python").join("python-3.13.2");
+        fs::create_dir_all(&healthy_dir)?;
+        fs::write(
+            PythonVersionManager::python_executable_in_dir(&healthy_dir),
+            b"fake-python",
+        )?;
+
+        let partial_dir = temp.path().join("python").join("python-3.14.3");
+        fs::create_dir_all(&partial_dir)?;
+
+        let versions = manager.list_installed()?;
+        let version_strings: Vec<String> = versions.into_iter().map(|v| v.to_string()).collect();
+
+        assert_eq!(version_strings, vec!["3.13.2".to_string()]);
 
         Ok(())
     }

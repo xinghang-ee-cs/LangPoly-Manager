@@ -61,6 +61,8 @@ const APP_HOME_DIR: &str = ".meetai";
 const LEGACY_APP_HOME_DIR: &str = ".python-manager";
 /// 用于覆盖默认应用目录的环境变量名。
 const APP_HOME_ENV: &str = "MEETAI_HOME";
+/// 标记历史数据补齐修复已经完成的文件名。
+const LEGACY_REPAIR_MARKER_FILE: &str = ".legacy-repair-complete";
 
 /// 应用程序配置结构体。
 ///
@@ -86,7 +88,7 @@ const APP_HOME_ENV: &str = "MEETAI_HOME";
 /// # 线程安全
 ///
 /// `Config` 是纯数据容器，内部字段均为 `PathBuf` 或 `String`，不可变时线程安全。
-/// 修改配置需通过 `save()` 持久化，该操作内部使用文件锁保证并发写入安全。
+/// 修改配置需通过 `save()` 持久化；如存在并发写入场景，需要在调用方额外协调。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     /// Python 安装根目录，所有已安装版本存储在此目录下。
@@ -131,9 +133,11 @@ impl Config {
     ///
     /// 加载流程：
     /// 1. 执行历史配置目录迁移（从 `.python-manager` 迁移到 `.meetai`）
-    /// 2. 确定配置文件路径 `{app_home}/config.json`
-    /// 3. 如果文件不存在，创建默认配置并保存
-    /// 4. 读取并解析 JSON 内容
+    /// 2. 对已存在的新目录执行一次历史数据补齐修复（如果附近仍保留旧目录）
+    /// 3. 确定配置文件路径 `{app_home}/config.json`
+    /// 4. 如果文件不存在，创建默认配置并保存
+    /// 5. 读取并解析 JSON 内容
+    /// 6. 如有需要，修正迁移后遗留的路径和当前版本状态
     ///
     /// # 错误
     ///
@@ -141,6 +145,7 @@ impl Config {
     /// - 读取文件失败（权限不足、磁盘错误等）
     /// - JSON 解析失败（配置文件损坏）
     /// - 目录迁移失败
+    /// - 配置修复失败
     ///
     /// # 示例
     ///
@@ -153,18 +158,23 @@ impl Config {
     /// ```
     pub fn load() -> Result<Self> {
         Self::migrate_legacy_home_dir_if_needed()?;
+        let app_home = Self::app_home_dir();
+        let legacy_candidates = Self::legacy_app_home_candidates();
 
         let config_path = Self::config_file_path();
 
-        if !config_path.exists() {
+        let mut config = if !config_path.exists() {
             let default_config = Self::default();
             default_config.save()?;
-            return Ok(default_config);
+            default_config
+        } else {
+            let content = std::fs::read_to_string(&config_path).context("读取配置文件失败")?;
+            serde_json::from_str(&content).context("解析配置文件失败")?
+        };
+
+        if Self::repair_loaded_config_if_needed(&mut config, &app_home, &legacy_candidates)? {
+            config.save()?;
         }
-
-        let content = std::fs::read_to_string(&config_path).context("读取配置文件失败")?;
-
-        let config: Config = serde_json::from_str(&content).context("解析配置文件失败")?;
 
         Ok(config)
     }
@@ -363,24 +373,35 @@ impl Config {
     /// 生成历史配置目录候选列表。
     ///
     /// 包含以下路径（按检查顺序）：
-    /// - 用户主目录下的 `.python-manager`（旧版本默认）
-    /// - 用户主目录下的 `.meetai`（早期版本曾使用）
     /// - 可执行文件目录下的 `.python-manager`
     /// - 可执行文件目录下的 `.meetai`
+    /// - 用户主目录下的 `.python-manager`（旧版本默认）
+    /// - 用户主目录下的 `.meetai`（早期版本曾使用）
     ///
     /// 返回去重后的路径列表。
     fn legacy_app_home_candidates() -> Vec<PathBuf> {
+        Self::build_legacy_app_home_candidates(home_dir(), Self::executable_parent_dir())
+    }
+
+    /// 生成历史配置目录候选列表的核心实现。
+    ///
+    /// 优先尝试可执行文件附近的历史目录，避免在用户主目录和部署目录同时存在旧数据时，
+    /// 误把无关的历史用户目录迁移成当前安装目录的数据源。
+    fn build_legacy_app_home_candidates(
+        user_home: Option<PathBuf>,
+        exe_dir: Option<PathBuf>,
+    ) -> Vec<PathBuf> {
         let mut candidates = Vec::<PathBuf>::new();
 
-        if let Some(home) = home_dir() {
-            candidates.push(home.join(LEGACY_APP_HOME_DIR));
-            // 旧默认目录为用户主目录 ~/.meetai，新策略下需迁移到新的 app home。
-            candidates.push(home.join(APP_HOME_DIR));
-        }
-        if let Some(exe_dir) = Self::executable_parent_dir() {
+        if let Some(exe_dir) = exe_dir {
             candidates.push(exe_dir.join(LEGACY_APP_HOME_DIR));
             // 历史版本把 .meetai 放在可执行文件目录，此处做兼容迁移
             candidates.push(exe_dir.join(APP_HOME_DIR));
+        }
+        if let Some(home) = user_home {
+            candidates.push(home.join(LEGACY_APP_HOME_DIR));
+            // 旧默认目录为用户主目录 ~/.meetai，新策略下需迁移到新的 app home。
+            candidates.push(home.join(APP_HOME_DIR));
         }
 
         Self::dedup_candidates(candidates)
@@ -518,6 +539,256 @@ impl Config {
         Ok(())
     }
 
+    /// 递归合并目录内容，仅补齐目标目录中缺失的文件，不覆盖已存在文件。
+    ///
+    /// 用于修复历史迁移后留下的半迁移状态，例如新目录已经存在，但旧目录中仍保留
+    /// 部分运行时版本、缓存或 shims 等缺失内容。
+    fn merge_dir_contents_skip_existing(from: &Path, to: &Path) -> Result<usize> {
+        let mut copied_entries = 0usize;
+
+        for entry in std::fs::read_dir(from)
+            .with_context(|| format!("读取修复源目录失败：{}", from.display()))?
+        {
+            let entry = entry.with_context(|| format!("读取目录条目失败：{}", from.display()))?;
+            let from_path = entry.path();
+            let to_path = to.join(entry.file_name());
+            let file_type = entry
+                .file_type()
+                .with_context(|| format!("读取条目类型失败：{}", from_path.display()))?;
+
+            if file_type.is_dir() {
+                if !to_path.exists() {
+                    std::fs::create_dir_all(&to_path).with_context(|| {
+                        format!("创建修复目标子目录失败：{}", to_path.display())
+                    })?;
+                }
+                copied_entries += Self::merge_dir_contents_skip_existing(&from_path, &to_path)?;
+            } else if file_type.is_file() {
+                if to_path.exists() {
+                    continue;
+                }
+                std::fs::copy(&from_path, &to_path).with_context(|| {
+                    format!(
+                        "复制修复文件失败（{} → {}）",
+                        from_path.display(),
+                        to_path.display()
+                    )
+                })?;
+                copied_entries += 1;
+            }
+        }
+
+        Ok(copied_entries)
+    }
+
+    /// 判断历史目录是否属于当前应用目录所在树，用于限制自动修复范围。
+    ///
+    /// 这样可以优先修复当前部署附近的旧目录，避免把无关安装位置的数据自动并入。
+    fn legacy_dir_is_in_same_app_tree(new_dir: &Path, legacy_dir: &Path) -> bool {
+        let Some(app_root) = new_dir.parent() else {
+            return false;
+        };
+
+        let app_root_key = Self::normalize_path_key(app_root);
+        let legacy_key = Self::normalize_path_key(legacy_dir);
+        if cfg!(windows) {
+            legacy_key == app_root_key || legacy_key.starts_with(&(app_root_key + "\\"))
+        } else {
+            legacy_key == app_root_key || legacy_key.starts_with(&(app_root_key + "/"))
+        }
+    }
+
+    /// 从单个历史目录向已存在的新目录补齐缺失内容。
+    ///
+    /// 返回本次补齐复制的文件数量；返回 0 表示没有缺失内容需要修复。
+    fn repair_existing_app_home_from_legacy_dir(
+        new_dir: &Path,
+        legacy_dir: &Path,
+    ) -> Result<usize> {
+        if !legacy_dir.exists() {
+            return Ok(0);
+        }
+
+        Self::merge_dir_contents_skip_existing(legacy_dir, new_dir)
+    }
+
+    /// 对已存在的新目录执行一次附近历史目录的非破坏性修复。
+    ///
+    /// 仅考虑和当前应用目录属于同一目录树的历史候选目录，避免跨安装位置自动混入数据。
+    fn repair_existing_app_home_from_candidates_if_needed(
+        new_dir: &Path,
+        candidates: &[PathBuf],
+    ) -> Result<()> {
+        if !new_dir.exists() {
+            return Ok(());
+        }
+        if Self::legacy_repair_marker_path(new_dir).exists() {
+            return Ok(());
+        }
+
+        let new_key = Self::normalize_path_key(new_dir);
+        for legacy_dir in candidates {
+            if !legacy_dir.exists() {
+                continue;
+            }
+            if Self::normalize_path_key(legacy_dir) == new_key {
+                continue;
+            }
+            if !Self::legacy_dir_is_in_same_app_tree(new_dir, legacy_dir) {
+                continue;
+            }
+
+            let copied_entries = Self::repair_existing_app_home_from_legacy_dir(
+                new_dir, legacy_dir,
+            )
+            .with_context(|| {
+                format!(
+                    "从历史数据目录补齐缺失内容失败（{} → {}）",
+                    legacy_dir.display(),
+                    new_dir.display()
+                )
+            })?;
+            if copied_entries > 0 {
+                println!(
+                    "注意：检测到历史数据目录 {} 仍包含缺失内容，已补齐到 {}。",
+                    legacy_dir.display(),
+                    new_dir.display()
+                );
+            }
+        }
+
+        if let Err(err) = std::fs::write(Self::legacy_repair_marker_path(new_dir), b"completed\n") {
+            warn!(
+                "写入历史修复标记失败（{}）：{:#}",
+                Self::legacy_repair_marker_path(new_dir).display(),
+                err
+            );
+        }
+
+        Ok(())
+    }
+
+    fn legacy_repair_marker_path(app_home: &Path) -> PathBuf {
+        app_home.join(LEGACY_REPAIR_MARKER_FILE)
+    }
+
+    fn expected_layout_for_app_home(app_home: &Path) -> Self {
+        Self {
+            python_install_dir: app_home.join("python"),
+            venv_dir: app_home.join("venvs"),
+            cache_dir: app_home.join("cache"),
+            current_python_version: None,
+        }
+    }
+
+    fn current_python_executable_for_version(python_install_dir: &Path, version: &str) -> PathBuf {
+        let install_dir = python_install_dir.join(format!("python-{version}"));
+        if cfg!(windows) {
+            install_dir.join("python.exe")
+        } else {
+            install_dir.join("bin/python")
+        }
+    }
+
+    fn normalize_managed_paths_if_needed(config: &mut Self, app_home: &Path) -> bool {
+        let expected = Self::expected_layout_for_app_home(app_home);
+        let mut changed = false;
+
+        if config.python_install_dir != expected.python_install_dir {
+            config.python_install_dir = expected.python_install_dir;
+            changed = true;
+        }
+        if config.venv_dir != expected.venv_dir {
+            config.venv_dir = expected.venv_dir;
+            changed = true;
+        }
+        if config.cache_dir != expected.cache_dir {
+            config.cache_dir = expected.cache_dir;
+            changed = true;
+        }
+
+        changed
+    }
+
+    fn recover_current_python_version_from_legacy_candidates(
+        app_home: &Path,
+        candidates: &[PathBuf],
+        python_install_dir: &Path,
+    ) -> Option<String> {
+        for legacy_dir in candidates {
+            if !legacy_dir.exists() {
+                continue;
+            }
+            if !Self::legacy_dir_is_in_same_app_tree(app_home, legacy_dir) {
+                continue;
+            }
+
+            let config_path = legacy_dir.join("config.json");
+            if !config_path.exists() {
+                continue;
+            }
+
+            let legacy_config = match std::fs::read_to_string(&config_path)
+                .with_context(|| format!("读取历史配置文件失败：{}", config_path.display()))
+                .and_then(|content| {
+                    serde_json::from_str::<Config>(&content).context("解析历史配置文件失败")
+                }) {
+                Ok(config) => config,
+                Err(err) => {
+                    warn!(
+                        "跳过无法读取的历史配置 {}：{:#}",
+                        config_path.display(),
+                        err
+                    );
+                    continue;
+                }
+            };
+
+            let Some(version) = legacy_config.current_python_version else {
+                continue;
+            };
+            let python_exe =
+                Self::current_python_executable_for_version(python_install_dir, &version);
+            if python_exe.exists() {
+                return Some(version);
+            }
+        }
+
+        None
+    }
+
+    fn repair_loaded_config_if_needed(
+        config: &mut Self,
+        app_home: &Path,
+        candidates: &[PathBuf],
+    ) -> Result<bool> {
+        let mut changed = Self::normalize_managed_paths_if_needed(config, app_home);
+
+        let current_valid = config
+            .current_python_version
+            .as_deref()
+            .map(|version| {
+                Self::current_python_executable_for_version(&config.python_install_dir, version)
+                    .exists()
+            })
+            .unwrap_or(false);
+        if current_valid {
+            return Ok(changed);
+        }
+
+        let recovered = Self::recover_current_python_version_from_legacy_candidates(
+            app_home,
+            candidates,
+            &config.python_install_dir,
+        );
+        if config.current_python_version != recovered {
+            config.current_python_version = recovered;
+            changed = true;
+        }
+
+        Ok(changed)
+    }
+
     /// 若当前应用目录尚不存在，则从历史候选目录中找到第一个已存在的目录并迁移过来。
     ///
     /// 迁移时优先使用 rename，跨设备时回退为 copy。
@@ -528,7 +799,10 @@ impl Config {
     fn migrate_legacy_home_dir_if_needed() -> Result<()> {
         let new_dir = Self::app_home_dir();
         let legacy_candidates = Self::legacy_app_home_candidates();
-        Self::migrate_from_candidates_if_needed(&new_dir, &legacy_candidates)
+        if !new_dir.exists() {
+            Self::migrate_from_candidates_if_needed(&new_dir, &legacy_candidates)?;
+        }
+        Self::repair_existing_app_home_from_candidates_if_needed(&new_dir, &legacy_candidates)
     }
 
     /// 从候选目录列表迁移第一个存在的目录到新目录。
@@ -606,6 +880,202 @@ mod tests {
             Config::resolve_app_home_dir(None, None, None),
             PathBuf::from(APP_HOME_DIR)
         );
+    }
+
+    /// 测试历史目录候选优先级：优先可执行文件附近的数据目录，再回退到用户主目录。
+    #[test]
+    fn legacy_app_home_candidates_prioritize_executable_adjacent_dirs() {
+        let user_home = PathBuf::from("X:/user-home");
+        let exe_dir = PathBuf::from("X:/meetai/bin");
+
+        let candidates = Config::build_legacy_app_home_candidates(
+            Some(user_home.clone()),
+            Some(exe_dir.clone()),
+        );
+
+        assert_eq!(candidates[0], exe_dir.join(LEGACY_APP_HOME_DIR));
+        assert_eq!(candidates[1], exe_dir.join(APP_HOME_DIR));
+        assert_eq!(candidates[2], user_home.join(LEGACY_APP_HOME_DIR));
+        assert_eq!(candidates[3], user_home.join(APP_HOME_DIR));
+    }
+
+    #[test]
+    fn repair_existing_app_home_merges_missing_files_from_same_tree_legacy_dir() -> Result<()> {
+        let temp = tempdir()?;
+        let app_root = temp.path().join("MeetAI");
+        let new_dir = app_root.join(".meetai");
+        let legacy_dir = app_root.join("bin").join(".meetai");
+
+        std::fs::create_dir_all(new_dir.join("python").join("python-3.14.3").join("Doc"))?;
+        std::fs::create_dir_all(legacy_dir.join("python").join("python-3.13.2"))?;
+        std::fs::create_dir_all(legacy_dir.join("python").join("python-3.14.3"))?;
+        std::fs::write(
+            new_dir.join("config.json"),
+            b"{\"current_python_version\":null}",
+        )?;
+        std::fs::write(
+            legacy_dir
+                .join("python")
+                .join("python-3.13.2")
+                .join(if cfg!(windows) {
+                    "python.exe"
+                } else {
+                    "bin/python"
+                }),
+            b"py3132",
+        )?;
+        std::fs::write(
+            legacy_dir
+                .join("python")
+                .join("python-3.14.3")
+                .join(if cfg!(windows) {
+                    "python.exe"
+                } else {
+                    "bin/python"
+                }),
+            b"py3143",
+        )?;
+        std::fs::write(legacy_dir.join("config.json"), b"{\"legacy\":true}")?;
+
+        let copied = Config::repair_existing_app_home_from_legacy_dir(&new_dir, &legacy_dir)?;
+
+        assert!(copied >= 2, "expected missing runtime files to be copied");
+        assert!(
+            Config::current_python_executable_for_version(&new_dir.join("python"), "3.13.2")
+                .exists()
+        );
+        assert!(
+            Config::current_python_executable_for_version(&new_dir.join("python"), "3.14.3")
+                .exists()
+        );
+        assert_eq!(
+            std::fs::read_to_string(new_dir.join("config.json"))?,
+            "{\"current_python_version\":null}"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn repair_existing_app_home_skips_unrelated_legacy_dirs() -> Result<()> {
+        let temp = tempdir()?;
+        let new_dir = temp.path().join("MeetAI").join(".meetai");
+        let unrelated_legacy = temp.path().join("Elsewhere").join(".python-manager");
+
+        std::fs::create_dir_all(&new_dir)?;
+        std::fs::create_dir_all(unrelated_legacy.join("python").join("python-3.13.2"))?;
+        std::fs::write(
+            unrelated_legacy
+                .join("python")
+                .join("python-3.13.2")
+                .join(if cfg!(windows) {
+                    "python.exe"
+                } else {
+                    "bin/python"
+                }),
+            b"py3132",
+        )?;
+
+        Config::repair_existing_app_home_from_candidates_if_needed(
+            &new_dir,
+            std::slice::from_ref(&unrelated_legacy),
+        )?;
+
+        assert!(
+            !Config::current_python_executable_for_version(&new_dir.join("python"), "3.13.2")
+                .exists()
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn repair_existing_app_home_writes_marker_and_skips_follow_up_scans() -> Result<()> {
+        let temp = tempdir()?;
+        let app_root = temp.path().join("MeetAI");
+        let new_dir = app_root.join(".meetai");
+        let legacy_dir = app_root.join("bin").join(".meetai");
+
+        std::fs::create_dir_all(&new_dir)?;
+        std::fs::create_dir_all(legacy_dir.join("python").join("python-3.13.2"))?;
+        let python_exe =
+            Config::current_python_executable_for_version(&legacy_dir.join("python"), "3.13.2");
+        if let Some(parent) = python_exe.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&python_exe, b"py3132")?;
+
+        Config::repair_existing_app_home_from_candidates_if_needed(
+            &new_dir,
+            std::slice::from_ref(&legacy_dir),
+        )?;
+        assert!(Config::legacy_repair_marker_path(&new_dir).exists());
+
+        let later_python_exe =
+            Config::current_python_executable_for_version(&legacy_dir.join("python"), "3.14.3");
+        if let Some(parent) = later_python_exe.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&later_python_exe, b"py3143")?;
+
+        Config::repair_existing_app_home_from_candidates_if_needed(
+            &new_dir,
+            std::slice::from_ref(&legacy_dir),
+        )?;
+        assert!(
+            !Config::current_python_executable_for_version(&new_dir.join("python"), "3.14.3")
+                .exists(),
+            "marker should prevent repeated deep scans after initial repair"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn repair_loaded_config_normalizes_paths_and_recovers_current_version() -> Result<()> {
+        let temp = tempdir()?;
+        let app_root = temp.path().join("MeetAI");
+        let app_home = app_root.join(".meetai");
+        let legacy_dir = app_root.join("bin").join(".meetai");
+
+        std::fs::create_dir_all(app_home.join("python").join("python-3.13.2"))?;
+        std::fs::create_dir_all(&legacy_dir)?;
+        let current_python_exe =
+            Config::current_python_executable_for_version(&app_home.join("python"), "3.13.2");
+        if let Some(parent) = current_python_exe.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&current_python_exe, b"py3132")?;
+        std::fs::write(
+            legacy_dir.join("config.json"),
+            br#"{
+  "python_install_dir": "X:\\legacy\\python",
+  "venv_dir": "X:\\legacy\\venvs",
+  "cache_dir": "X:\\legacy\\cache",
+  "current_python_version": "3.13.2"
+}"#,
+        )?;
+
+        let mut config = Config {
+            python_install_dir: PathBuf::from("X:/legacy/python"),
+            venv_dir: PathBuf::from("X:/legacy/venvs"),
+            cache_dir: PathBuf::from("X:/legacy/cache"),
+            current_python_version: Some("3.14.3".to_string()),
+        };
+
+        let changed = Config::repair_loaded_config_if_needed(
+            &mut config,
+            &app_home,
+            std::slice::from_ref(&legacy_dir),
+        )?;
+
+        assert!(changed);
+        assert_eq!(config.python_install_dir, app_home.join("python"));
+        assert_eq!(config.venv_dir, app_home.join("venvs"));
+        assert_eq!(config.cache_dir, app_home.join("cache"));
+        assert_eq!(config.current_python_version.as_deref(), Some("3.13.2"));
+
+        Ok(())
     }
 
     /// 测试路径去重：Windows 下不区分大小写和斜杠方向

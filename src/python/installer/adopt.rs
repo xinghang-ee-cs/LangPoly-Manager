@@ -11,7 +11,7 @@
 //! 采纳流程：
 //! 1. 在系统常见 Python 安装目录中查找匹配版本的安装
 //! 2. 验证找到的 Python 可执行文件版本是否匹配
-//! 3. 复制安装目录到 MeetAI 管理目录（`<app_home>/versions/<version>`）
+//! 3. Windows 复制安装目录；Unix/Linux 创建受控 `bin/python` 代理入口
 //! 4. 生成 shims 并更新 PATH 配置
 //!
 //! 平台特定的系统 Python 安装位置：
@@ -32,7 +32,7 @@
 //! - 版本不匹配：返回 `PythonVersionMismatchError`
 //!
 //! 注意：
-//! - 采纳操作是**复制**而非移动，原系统安装保持不变
+//! - 采纳操作不会移动原系统安装；Windows 复制目录，Unix/Linux 写入代理脚本
 //! - 采纳后，MeetAI 管理的版本将优先于系统版本（通过 shims）
 //! - 仅当系统安装的版本与请求版本**完全匹配**时才采纳
 
@@ -48,6 +48,14 @@ impl PythonInstaller {
         version: &str,
         progress: Option<&ProgressBar>,
     ) -> Result<bool> {
+        if !cfg!(windows) {
+            let Some(python_exe) = self.find_existing_system_python_executable(version)? else {
+                return Ok(false);
+            };
+            self.adopt_unix_python_executable(version, &python_exe, progress)?;
+            return Ok(true);
+        }
+
         let Some(existing_dir) = self.find_existing_system_python_dir(version)? else {
             return Ok(false);
         };
@@ -115,6 +123,80 @@ impl PythonInstaller {
         );
 
         Ok(true)
+    }
+
+    fn adopt_unix_python_executable(
+        &self,
+        version: &str,
+        python_exe: &Path,
+        progress: Option<&ProgressBar>,
+    ) -> Result<()> {
+        let install_dir = self.get_install_dir(version);
+        if install_dir.exists() {
+            std::fs::remove_dir_all(&install_dir).with_context(|| {
+                format!(
+                    "Failed to remove existing managed install dir before adoption: {}",
+                    install_dir.display()
+                )
+            })?;
+        }
+
+        let bin_dir = install_dir.join("bin");
+        std::fs::create_dir_all(&bin_dir).with_context(|| {
+            format!(
+                "Failed to create managed Python bin dir before adoption: {}",
+                bin_dir.display()
+            )
+        })?;
+
+        if let Some(pb) = progress {
+            pb.set_position(70);
+            pb.set_message("📂 正在注册系统 Python 到 MeetAI 管理目录...");
+        }
+
+        let shim_path = bin_dir.join("python");
+        Self::write_unix_adopted_python_launcher(&shim_path, python_exe)?;
+
+        let python3_path = bin_dir.join("python3");
+        if python3_path.exists() {
+            std::fs::remove_file(&python3_path).with_context(|| {
+                format!(
+                    "Failed to remove existing managed python3 launcher: {}",
+                    python3_path.display()
+                )
+            })?;
+        }
+
+        #[cfg(unix)]
+        std::os::unix::fs::symlink("python", &python3_path)
+            .or_else(|_| std::fs::copy(&shim_path, &python3_path).map(|_| ()))
+            .with_context(|| {
+                format!(
+                    "Failed to create managed python3 launcher: {}",
+                    python3_path.display()
+                )
+            })?;
+
+        #[cfg(not(unix))]
+        std::fs::copy(&shim_path, &python3_path).with_context(|| {
+            format!(
+                "Failed to create managed python3 launcher: {}",
+                python3_path.display()
+            )
+        })?;
+
+        if let Some(pb) = progress {
+            pb.set_position(97);
+            pb.set_message("✅ 正在完成系统 Python 注册...");
+        }
+
+        println!(
+            "检测到系统已安装 Python {}（{}），已注册到 MeetAI 管理目录。",
+            version,
+            python_exe.display()
+        );
+
+        Ok(())
     }
 
     #[cfg(test)]
@@ -400,6 +482,187 @@ impl PythonInstaller {
         }
 
         Ok(None)
+    }
+
+    pub(super) fn get_latest_system_python_version(&self) -> Result<Option<String>> {
+        let mut versions = Vec::<Version>::new();
+        for candidate in Self::build_unix_python_executable_candidates(None, None) {
+            if !candidate.exists() {
+                continue;
+            }
+            if !Self::is_trusted_unix_python_executable(&candidate) {
+                warn!(
+                    "Skip untrusted Python executable candidate outside trusted roots: {}",
+                    candidate.display()
+                );
+                continue;
+            }
+            let Some(version) = Self::read_python_executable_version(&candidate)? else {
+                continue;
+            };
+            versions.push(version);
+        }
+
+        versions.sort();
+        versions.dedup();
+        Ok(versions.pop().map(|version| version.to_string()))
+    }
+
+    pub(super) fn find_existing_system_python_executable(
+        &self,
+        version: &str,
+    ) -> Result<Option<PathBuf>> {
+        let parsed = Version::parse(version)
+            .with_context(|| format!("Invalid Python version: {version}"))?;
+        let candidates = Self::build_unix_python_executable_candidates(
+            Some((parsed.major, parsed.minor)),
+            Some(version),
+        );
+
+        let mut unique = HashSet::<String>::new();
+        for candidate in candidates {
+            if !unique.insert(candidate.to_string_lossy().to_string()) {
+                continue;
+            }
+            if !candidate.exists() {
+                continue;
+            }
+            if !Self::is_trusted_unix_python_executable(&candidate) {
+                warn!(
+                    "Skip untrusted Python executable candidate outside trusted roots: {}",
+                    candidate.display()
+                );
+                continue;
+            }
+            if Self::python_exe_matches_version(&candidate, version)? {
+                return Ok(Some(candidate));
+            }
+        }
+
+        Ok(None)
+    }
+
+    pub(super) fn build_unix_python_executable_candidates(
+        major_minor: Option<(u64, u64)>,
+        exact_version: Option<&str>,
+    ) -> Vec<PathBuf> {
+        let mut names = Vec::<String>::new();
+        if let Some(version) = exact_version {
+            names.push(format!("python{version}"));
+        }
+        if let Some((major, minor)) = major_minor {
+            names.push(format!("python{major}.{minor}"));
+            names.push(format!("python{major}"));
+        }
+        names.push("python3".to_string());
+        names.push("python".to_string());
+
+        let mut candidates = Vec::<PathBuf>::new();
+        for dir in Self::trusted_unix_python_executable_dirs() {
+            for name in &names {
+                candidates.push(dir.join(name));
+            }
+        }
+
+        candidates
+    }
+
+    pub(super) fn trusted_unix_python_executable_dirs() -> Vec<PathBuf> {
+        let mut dirs = vec![
+            PathBuf::from("/usr/bin"),
+            PathBuf::from("/usr/local/bin"),
+            PathBuf::from("/opt/homebrew/bin"),
+            PathBuf::from("/usr/local/opt/python/bin"),
+        ];
+        if let Some(home) = home_dir() {
+            dirs.push(home.join(".local").join("bin"));
+            dirs.push(home.join("bin"));
+        }
+        dirs
+    }
+
+    pub(super) fn is_trusted_unix_python_executable(candidate: &Path) -> bool {
+        let Some(parent) = candidate.parent() else {
+            return false;
+        };
+        Self::trusted_unix_python_executable_dirs()
+            .iter()
+            .any(|dir| Self::paths_equal(parent, dir))
+    }
+
+    fn paths_equal(a: &Path, b: &Path) -> bool {
+        if cfg!(windows) {
+            a.to_string_lossy().replace('/', "\\").to_lowercase()
+                == b.to_string_lossy().replace('/', "\\").to_lowercase()
+        } else {
+            a == b
+        }
+    }
+
+    pub(super) fn read_python_executable_version(python_exe: &Path) -> Result<Option<Version>> {
+        let output = Command::new(python_exe)
+            .arg("--version")
+            .output()
+            .with_context(|| format!("Failed to execute '{} --version'", python_exe.display()))?;
+
+        if !output.status.success() {
+            return Ok(None);
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let combined = format!("{}\n{}", stdout.trim(), stderr.trim());
+        Self::parse_python_version_from_output(&combined)
+    }
+
+    pub(super) fn parse_python_version_from_output(output: &str) -> Result<Option<Version>> {
+        let re = Regex::new(r"(?m)^Python\s+(\d+\.\d+\.\d+)(?:\s|$)")
+            .context("Failed to compile Python version parse regex")?;
+        let Some(captures) = re.captures(output) else {
+            return Ok(None);
+        };
+        let Some(version) = captures.get(1) else {
+            return Ok(None);
+        };
+        Ok(Some(Version::parse(version.as_str()).with_context(
+            || format!("Failed to parse Python version output: {output}"),
+        )?))
+    }
+
+    pub(super) fn write_unix_adopted_python_launcher(
+        launcher_path: &Path,
+        python_exe: &Path,
+    ) -> Result<()> {
+        let escaped = Self::escape_sh_single_quotes(&python_exe.display().to_string());
+        let script = format!(
+            "#!/usr/bin/env sh\nMEETAI_ADOPTED_PYTHON='{python_exe}'\nif [ ! -x \"$MEETAI_ADOPTED_PYTHON\" ]; then\n  echo \"[meetai] 已注册的系统 Python 不存在或不可执行: $MEETAI_ADOPTED_PYTHON\" >&2\n  echo \"[meetai] 请重新执行: meetai python install <version>\" >&2\n  exit 1\nfi\nexec \"$MEETAI_ADOPTED_PYTHON\" \"$@\"\n",
+            python_exe = escaped
+        );
+        std::fs::write(launcher_path, script).with_context(|| {
+            format!(
+                "Failed to write adopted Python launcher: {}",
+                launcher_path.display()
+            )
+        })?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(launcher_path)?.permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(launcher_path, perms).with_context(|| {
+                format!(
+                    "Failed to set executable permission on adopted Python launcher: {}",
+                    launcher_path.display()
+                )
+            })?;
+        }
+
+        Ok(())
+    }
+
+    fn escape_sh_single_quotes(raw: &str) -> String {
+        raw.replace('\'', "'\"'\"'")
     }
 
     pub(super) fn build_default_python_dir_candidates(major: u64, minor: u64) -> Vec<PathBuf> {

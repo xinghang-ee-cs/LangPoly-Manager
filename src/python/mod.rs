@@ -37,7 +37,7 @@
 //! - 版本号使用自定义 `PythonVersion` 类型，支持比较和显示
 //! - 通过 shims 目录实现版本切换，无需管理员权限
 //! - Windows 平台支持完整自动安装（python.org 安装包）
-//! - macOS/Linux 平台需用户手动安装，仅管理已有版本
+//! - macOS/Linux 平台支持采纳系统已安装 Python，不执行 root 级安装或源码编译
 //! - 虚拟环境支持跨平台（PowerShell / shell 激活脚本）
 //!
 //! 与其它模块集成：
@@ -84,9 +84,9 @@ pub async fn handle_python_command(args: PythonArgs) -> Result<()> {
                     println!("  meetai python install latest   # 安装最新稳定版");
                     println!("  meetai python install 3.13.2   # 安装指定版本");
                 } else {
-                    println!("  当前平台暂不支持自动安装。");
+                    println!("  meetai python install latest          # 采纳系统 Python");
+                    println!("  meetai python install <version>       # 采纳指定系统版本");
                     println!("  meetai runtime list python            # 查看 MeetAI 已管理版本");
-                    println!("  meetai runtime use python <version>   # 切换到已管理版本");
                 }
             } else {
                 println!("已安装的 Python 版本（共 {} 个）：", versions.len());

@@ -61,13 +61,36 @@ use crate::utils::validator::Validator;
 use anyhow::{Context, Result};
 use semver::Version;
 use serde::Deserialize;
-use std::fs;
 use std::path::{Path, PathBuf};
+use std::{env, fs};
 use tokio::process::Command as TokioCommand;
 
 const NODE_DIST_INDEX_URL: &str = "https://nodejs.org/dist/index.json";
 const NODE_DIST_BASE_URL: &str = "https://nodejs.org/dist";
 const DEFAULT_AVAILABLE_VERSION_LIMIT: usize = 12;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NodeArchiveFormat {
+    Zip,
+    TarXz,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct NodePlatformPackage {
+    platform_token: &'static str,
+    dist_file_key: &'static str,
+    archive_suffix: &'static str,
+    archive_format: NodeArchiveFormat,
+}
+
+impl NodePlatformPackage {
+    fn archive_name(self, version: &str) -> String {
+        format!(
+            "node-v{}-{}.{}",
+            version, self.platform_token, self.archive_suffix
+        )
+    }
+}
 
 /// 可安装的 Node.js 版本信息（含 LTS 标记）。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -103,15 +126,10 @@ struct NodeDistRelease {
 
 impl NodeDistRelease {
     fn supports_current_platform(&self) -> bool {
-        if cfg!(windows) {
-            let Ok(platform_token) = NodeInstaller::windows_platform_token() else {
-                return false;
-            };
-            let required_file_key = format!("{}-zip", platform_token);
-            self.files.iter().any(|f| f == &required_file_key)
-        } else {
-            true
-        }
+        let Ok(package) = NodeInstaller::current_platform_package() else {
+            return false;
+        };
+        self.files.iter().any(|f| f == package.dist_file_key)
     }
 
     fn normalized_version(&self) -> Option<String> {
@@ -176,18 +194,14 @@ impl NodeInstaller {
             return Ok(resolved_version);
         }
 
-        if !cfg!(windows) {
-            anyhow::bail!("{}", Self::unsupported_auto_install_message());
-        }
-
-        let platform_token = Self::windows_platform_token()?;
+        let package = Self::current_platform_package()?;
         let archive_path = self
             .config
             .cache_dir
-            .join(format!("node-v{}-{}.zip", resolved_version, platform_token));
+            .join(package.archive_name(&resolved_version));
         let extract_dir = self.config.cache_dir.join(format!(
             "node-v{}-{}-extract",
-            resolved_version, platform_token
+            resolved_version, package.platform_token
         ));
 
         let download_url = self.build_download_url(&resolved_version)?;
@@ -206,7 +220,7 @@ impl NodeInstaller {
         }
 
         if let Err(err) = self
-            .extract_and_install(&archive_path, &extract_dir, &resolved_version)
+            .extract_and_install(&archive_path, &extract_dir, &resolved_version, package)
             .await
         {
             self.cleanup_failed_install(&install_dir, &extract_dir);
@@ -235,21 +249,25 @@ impl NodeInstaller {
     }
 
     async fn resolve_latest_target_version(&self) -> Result<String> {
-        if !cfg!(windows) {
-            if let Some(local_latest) = self.get_latest_installed_version()? {
+        let local_latest = self.get_latest_installed_version()?;
+        if Self::current_platform_package().is_err() {
+            if let Some(local_latest) = local_latest {
                 return Ok(local_latest);
             }
             anyhow::bail!("{}", Self::unsupported_auto_install_message());
         }
 
         let remote_latest = self.resolve_latest_from_remote().await.ok();
-        let local_latest = self.get_latest_installed_version()?;
         Self::choose_latest_version(remote_latest, local_latest).with_context(|| {
             "无法解析 latest/newest 对应的 Node.js 版本，请检查网络后重试，或显式指定版本号（例如 20.11.1）"
         })
     }
 
     async fn resolve_latest_lts_target_version(&self) -> Result<String> {
+        if Self::current_platform_package().is_err() {
+            anyhow::bail!("{}", Self::unsupported_auto_install_message());
+        }
+
         self.resolve_latest_lts_from_remote().await.with_context(|| {
             "无法解析 lts 对应的 Node.js LTS 版本，请检查网络后重试，或显式指定版本号（例如 20.11.1）"
         })
@@ -339,10 +357,12 @@ impl NodeInstaller {
     }
 
     fn build_download_url(&self, version: &str) -> Result<String> {
-        let platform = Self::windows_platform_token()?;
+        let package = Self::current_platform_package()?;
         Ok(format!(
-            "{}/v{}/node-v{}-{}.zip",
-            NODE_DIST_BASE_URL, version, version, platform
+            "{}/v{}/{}",
+            NODE_DIST_BASE_URL,
+            version,
+            package.archive_name(version)
         ))
     }
 
@@ -351,6 +371,7 @@ impl NodeInstaller {
         archive_path: &Path,
         extract_dir: &Path,
         version: &str,
+        package: NodePlatformPackage,
     ) -> Result<()> {
         if extract_dir.exists() {
             fs::remove_dir_all(extract_dir)
@@ -359,10 +380,10 @@ impl NodeInstaller {
         fs::create_dir_all(extract_dir)
             .with_context(|| format!("创建解压目录失败：{}", extract_dir.display()))?;
 
-        self.expand_archive_windows(archive_path, extract_dir)
+        self.expand_archive(archive_path, extract_dir, package)
             .await?;
 
-        let root_dir = self.resolve_extracted_root(extract_dir, version)?;
+        let root_dir = self.resolve_extracted_root(extract_dir, version, package)?;
         let install_dir = self.install_dir(version)?;
         if install_dir.exists() {
             fs::remove_dir_all(&install_dir)
@@ -373,6 +394,18 @@ impl NodeInstaller {
         self.copy_directory_contents(&root_dir, &install_dir)?;
 
         Ok(())
+    }
+
+    async fn expand_archive(
+        &self,
+        archive_path: &Path,
+        extract_dir: &Path,
+        package: NodePlatformPackage,
+    ) -> Result<()> {
+        match package.archive_format {
+            NodeArchiveFormat::Zip => self.expand_archive_windows(archive_path, extract_dir).await,
+            NodeArchiveFormat::TarXz => self.expand_archive_tar_xz(archive_path, extract_dir).await,
+        }
     }
 
     async fn expand_archive_windows(&self, archive_path: &Path, extract_dir: &Path) -> Result<()> {
@@ -406,8 +439,39 @@ impl NodeInstaller {
         Ok(())
     }
 
-    fn resolve_extracted_root(&self, extract_dir: &Path, version: &str) -> Result<PathBuf> {
-        let expected_name = format!("node-v{}-{}", version, Self::windows_platform_token()?);
+    async fn expand_archive_tar_xz(&self, archive_path: &Path, extract_dir: &Path) -> Result<()> {
+        let output = TokioCommand::new("tar")
+            .arg("-xJf")
+            .arg(archive_path)
+            .arg("-C")
+            .arg(extract_dir)
+            .output()
+            .await
+            .context("调用 tar 解压 Node.js tar.xz 包失败，请确认系统已安装 tar 和 xz")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            anyhow::bail!(
+                "解压 Node.js tar.xz 安装包失败（退出码：{}）：{}",
+                output.status,
+                if stderr.is_empty() {
+                    "<empty>"
+                } else {
+                    &stderr
+                }
+            );
+        }
+
+        Ok(())
+    }
+
+    fn resolve_extracted_root(
+        &self,
+        extract_dir: &Path,
+        version: &str,
+        package: NodePlatformPackage,
+    ) -> Result<PathBuf> {
+        let expected_name = format!("node-v{}-{}", version, package.platform_token);
         let expected = extract_dir.join(&expected_name);
         if expected.exists() && expected.is_dir() {
             return Ok(expected);
@@ -454,9 +518,35 @@ impl NodeInstaller {
                         dst_path.display()
                     )
                 })?;
+            } else if file_type.is_symlink() {
+                Self::copy_symlink(&src_path, &dst_path)?;
             }
         }
         Ok(())
+    }
+
+    fn copy_symlink(src_path: &Path, dst_path: &Path) -> Result<()> {
+        #[cfg(unix)]
+        {
+            let link_target = fs::read_link(src_path)
+                .with_context(|| format!("读取符号链接失败：{}", src_path.display()))?;
+            return std::os::unix::fs::symlink(&link_target, dst_path).with_context(|| {
+                format!(
+                    "复制符号链接失败（{} -> {}）",
+                    src_path.display(),
+                    dst_path.display()
+                )
+            });
+        }
+
+        #[cfg(not(unix))]
+        {
+            anyhow::bail!(
+                "当前平台暂不支持复制 Node.js 包中的符号链接：{} -> {}",
+                src_path.display(),
+                dst_path.display()
+            );
+        }
     }
 
     async fn verify_installation(&self, version: &str) -> Result<()> {
@@ -535,22 +625,50 @@ impl NodeInstaller {
     }
 
     fn unsupported_auto_install_message() -> &'static str {
-        "当前平台暂不支持自动下载安装 Node.js。可先手动安装后再执行 `meetai node use <version>`。"
+        "当前平台暂不支持自动下载安装 Node.js（目前支持 Windows 与 Linux x64/arm64）。可先手动安装后再执行 `meetai node use <version>`。"
     }
 
-    fn windows_platform_token() -> Result<&'static str> {
-        if !cfg!(windows) {
-            anyhow::bail!("当前仅支持 Windows 自动安装");
-        }
+    pub(crate) fn supports_auto_install_on_current_platform() -> bool {
+        Self::current_platform_package().is_ok()
+    }
 
-        if cfg!(target_arch = "x86_64") {
-            Ok("win-x64")
-        } else if cfg!(target_arch = "aarch64") {
-            Ok("win-arm64")
-        } else if cfg!(target_arch = "x86") {
-            Ok("win-x86")
-        } else {
-            anyhow::bail!("不支持的系统架构")
+    fn current_platform_package() -> Result<NodePlatformPackage> {
+        Self::platform_package_for(env::consts::OS, env::consts::ARCH)
+    }
+
+    fn platform_package_for(os: &str, arch: &str) -> Result<NodePlatformPackage> {
+        match (os, arch) {
+            ("windows", "x86_64") => Ok(NodePlatformPackage {
+                platform_token: "win-x64",
+                dist_file_key: "win-x64-zip",
+                archive_suffix: "zip",
+                archive_format: NodeArchiveFormat::Zip,
+            }),
+            ("windows", "aarch64") => Ok(NodePlatformPackage {
+                platform_token: "win-arm64",
+                dist_file_key: "win-arm64-zip",
+                archive_suffix: "zip",
+                archive_format: NodeArchiveFormat::Zip,
+            }),
+            ("windows", "x86") => Ok(NodePlatformPackage {
+                platform_token: "win-x86",
+                dist_file_key: "win-x86-zip",
+                archive_suffix: "zip",
+                archive_format: NodeArchiveFormat::Zip,
+            }),
+            ("linux", "x86_64") => Ok(NodePlatformPackage {
+                platform_token: "linux-x64",
+                dist_file_key: "linux-x64",
+                archive_suffix: "tar.xz",
+                archive_format: NodeArchiveFormat::TarXz,
+            }),
+            ("linux", "aarch64") => Ok(NodePlatformPackage {
+                platform_token: "linux-arm64",
+                dist_file_key: "linux-arm64",
+                archive_suffix: "tar.xz",
+                archive_format: NodeArchiveFormat::TarXz,
+            }),
+            _ => anyhow::bail!("当前平台暂不支持 Node.js 自动安装：{}-{}", os, arch),
         }
     }
 }
@@ -626,18 +744,30 @@ mod tests {
         assert!(NodeInstaller::normalize_version_token("20.11").is_none());
     }
 
+    fn current_platform_file_key() -> Option<&'static str> {
+        NodeInstaller::current_platform_package()
+            .ok()
+            .map(|package| package.dist_file_key)
+    }
+
     #[test]
     fn parse_available_versions_from_index_body_sorts_versions_and_marks_lts() -> Result<()> {
-        let body = r#"
-        [
-          {"version":"v20.11.1","files":["win-x64-zip"],"lts":"Iron"},
-          {"version":"v22.3.0","files":["win-x64-zip"],"lts":false},
-          {"version":"v18.20.4","files":["win-x64-zip"],"lts":"Hydrogen"}
-        ]
-        "#;
+        let Some(file_key) = current_platform_file_key() else {
+            return Ok(());
+        };
+        let body = format!(
+            r#"
+            [
+              {{"version":"v20.11.1","files":["{file_key}"],"lts":"Iron"}},
+              {{"version":"v22.3.0","files":["{file_key}"],"lts":false}},
+              {{"version":"v18.20.4","files":["{file_key}"],"lts":"Hydrogen"}}
+            ]
+            "#
+        );
 
-        let installer = NodeInstaller::new()?;
-        let versions = installer.parse_available_versions_from_index_body(body)?;
+        let temp = tempfile::tempdir()?;
+        let installer = make_installer(temp.path())?;
+        let versions = installer.parse_available_versions_from_index_body(&body)?;
         assert_eq!(versions[0].version, "22.3.0");
         assert!(!versions[0].is_lts());
         assert_eq!(versions[1].version, "20.11.1");
@@ -647,39 +777,51 @@ mod tests {
 
     #[test]
     fn parse_latest_version_from_index_body_selects_highest_with_required_file() -> Result<()> {
-        let body = r#"
-        [
-          {"version":"v22.5.0","files":["linux-x64","src"],"lts":false},
-          {"version":"v20.11.1","files":["win-x64-zip","linux-x64"],"lts":"Iron"},
-          {"version":"v22.3.0","files":["win-x64-zip","linux-x64"],"lts":false}
-        ]
-        "#;
+        let Some(file_key) = current_platform_file_key() else {
+            return Ok(());
+        };
+        let body = format!(
+            r#"
+            [
+              {{"version":"v22.5.0","files":["src"],"lts":false}},
+              {{"version":"v20.11.1","files":["{file_key}"],"lts":"Iron"}},
+              {{"version":"v22.3.0","files":["{file_key}"],"lts":false}}
+            ]
+            "#
+        );
 
-        let installer = NodeInstaller::new()?;
-        let latest = installer.parse_latest_version_from_index_body(body)?;
+        let temp = tempfile::tempdir()?;
+        let installer = make_installer(temp.path())?;
+        let latest = installer.parse_latest_version_from_index_body(&body)?;
         assert_eq!(latest, "22.3.0");
         Ok(())
     }
 
     #[test]
     fn parse_latest_lts_version_from_index_body_selects_highest_lts() -> Result<()> {
-        let body = r#"
-        [
-          {"version":"v22.3.0","files":["win-x64-zip"],"lts":false},
-          {"version":"v20.11.1","files":["win-x64-zip"],"lts":"Iron"},
-          {"version":"v18.20.4","files":["win-x64-zip"],"lts":"Hydrogen"}
-        ]
-        "#;
+        let Some(file_key) = current_platform_file_key() else {
+            return Ok(());
+        };
+        let body = format!(
+            r#"
+            [
+              {{"version":"v22.3.0","files":["{file_key}"],"lts":false}},
+              {{"version":"v20.11.1","files":["{file_key}"],"lts":"Iron"}},
+              {{"version":"v18.20.4","files":["{file_key}"],"lts":"Hydrogen"}}
+            ]
+            "#
+        );
 
-        let installer = NodeInstaller::new()?;
-        let latest_lts = installer.parse_latest_lts_version_from_index_body(body)?;
+        let temp = tempfile::tempdir()?;
+        let installer = make_installer(temp.path())?;
+        let latest_lts = installer.parse_latest_lts_version_from_index_body(&body)?;
         assert_eq!(latest_lts, "20.11.1");
         Ok(())
     }
 
     #[tokio::test]
     async fn resolve_latest_on_non_windows_returns_local_or_platform_error() -> Result<()> {
-        if cfg!(windows) {
+        if NodeInstaller::supports_auto_install_on_current_platform() {
             return Ok(());
         }
 
@@ -700,6 +842,39 @@ mod tests {
             }
         }
 
+        Ok(())
+    }
+
+    #[test]
+    fn platform_package_maps_linux_and_windows_archives() -> Result<()> {
+        let linux_x64 = NodeInstaller::platform_package_for("linux", "x86_64")?;
+        assert_eq!(linux_x64.platform_token, "linux-x64");
+        assert_eq!(linux_x64.dist_file_key, "linux-x64");
+        assert_eq!(
+            linux_x64.archive_name("20.11.1"),
+            "node-v20.11.1-linux-x64.tar.xz"
+        );
+        assert_eq!(linux_x64.archive_format, NodeArchiveFormat::TarXz);
+
+        let linux_arm64 = NodeInstaller::platform_package_for("linux", "aarch64")?;
+        assert_eq!(linux_arm64.platform_token, "linux-arm64");
+        assert_eq!(linux_arm64.dist_file_key, "linux-arm64");
+        assert_eq!(
+            linux_arm64.archive_name("20.11.1"),
+            "node-v20.11.1-linux-arm64.tar.xz"
+        );
+        assert_eq!(linux_arm64.archive_format, NodeArchiveFormat::TarXz);
+
+        let windows_x64 = NodeInstaller::platform_package_for("windows", "x86_64")?;
+        assert_eq!(windows_x64.platform_token, "win-x64");
+        assert_eq!(windows_x64.dist_file_key, "win-x64-zip");
+        assert_eq!(
+            windows_x64.archive_name("20.11.1"),
+            "node-v20.11.1-win-x64.zip"
+        );
+        assert_eq!(windows_x64.archive_format, NodeArchiveFormat::Zip);
+
+        assert!(NodeInstaller::platform_package_for("macos", "x86_64").is_err());
         Ok(())
     }
 }
