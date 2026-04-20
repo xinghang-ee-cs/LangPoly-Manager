@@ -46,7 +46,7 @@ meetai runtime list node               # 列出已安装的 Node.js 版本
 meetai runtime install python latest   # 最新稳定版
 meetai runtime install python 3.13.2   # 指定版本
 
-# Node.js（Windows 支持自动安装）
+# Node.js（Windows/Linux x64/arm64 支持自动安装）
 meetai runtime install node lts        # 最新 LTS（推荐）
 meetai runtime install node latest     # 最新版本
 meetai runtime install node 20.11.1    # 指定版本
@@ -230,7 +230,7 @@ meetai quick-install --python-version 3.13.2
 # 不创建虚拟环境
 meetai quick-install --create-venv false
 
-# 同时安装 Node.js（Windows）
+# 同时安装 Node.js（Windows/Linux x64/arm64）
 meetai quick-install --install-nodejs true
 
 # 指定 Node.js 版本
@@ -253,7 +253,7 @@ meetai quick-install --auto-activate false
 | `--create-venv` | `true` | 是否创建虚拟环境 |
 | `--auto-activate` | `true` | 是否启用自动激活提示 |
 | `--target-dir` | `.` | 安装目标目录 |
-| `--install-nodejs` | `false` | 是否安装 Node.js（Windows） |
+| `--install-nodejs` | `false` | 是否安装 Node.js（Windows/Linux x64/arm64 支持自动安装） |
 | `--nodejs-version` | `lts` | Node.js 版本 |
 
 ---
@@ -312,8 +312,10 @@ meetai python use 3.11.0  # 切换
    - 加 `-v` 选项：`meetai -v runtime install python 3.13.2`
 
 3. **平台差异**
-   - Windows：支持自动下载安装
-   - macOS/Linux：需手动安装后用 `use` 切换
+   - Python Windows：支持自动下载安装
+   - Python macOS/Linux：不下载或编译 Python，会采纳系统已安装版本
+   - Node.js Windows/Linux x64/arm64：支持自动下载安装
+   - 其他平台/架构：需手动安装后用 `use` 切换
 
 ---
 

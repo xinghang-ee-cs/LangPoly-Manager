@@ -94,21 +94,23 @@ pub enum Commands {
     ///
     /// 提供统一的接口管理多种编程语言运行时，支持安装、卸载、切换版本。
     /// 不同运行时的安装能力可能因平台而异：
-    /// - Windows: 支持自动下载安装
-    /// - macOS/Linux: 需手动安装后用 `use` 命令切换
+    /// - Python Windows: 支持自动下载安装
+    /// - Python macOS/Linux: 采纳系统已安装版本
+    /// - Node.js Windows/Linux x64/arm64: 支持自动下载安装
+    /// - 其他平台/架构: 需手动安装后用 `use` 命令切换
     #[command(name = "runtime")]
     Runtime(RuntimeArgs),
 
     /// Python 版本管理
     ///
     /// 管理本地已安装的 Python 版本，包括安装、卸载、切换当前版本。
-    /// 支持 `latest` 关键字自动获取最新稳定版。
+    /// 支持 `latest` 关键字；Windows 会下载安装，Linux/macOS 会采纳系统 Python。
     #[command(name = "python")]
     Python(PythonArgs),
 
     /// Node.js 版本管理
     ///
-    /// 管理本地已安装的 Node.js 版本，支持从官方源自动下载安装（Windows）。
+    /// 管理本地已安装的 Node.js 版本，支持从官方源自动下载安装（Windows/Linux x64/arm64）。
     /// 额外提供 `available` 子命令查看官方可安装版本列表（含 LTS 标记）。
     #[command(name = "node")]
     Node(NodeArgs),
@@ -209,7 +211,7 @@ pub struct RuntimeArgs {
 /// # 使用说明
 ///
 /// - `list`: 列出所有支持的运行时，或指定运行时的已安装版本
-/// - `install`: 安装指定版本。Windows 可自动下载；其他平台需手动安装后使用 `use`
+/// - `install`: 安装指定版本。Python Windows 可下载、macOS/Linux 可采纳系统版本；Node.js Windows/Linux x64/arm64 可下载
 /// - `use`: 切换当前激活的运行时版本（修改 shims 指向）
 /// - `uninstall`: 卸载指定版本
 ///
@@ -243,11 +245,13 @@ pub enum RuntimeAction {
         runtime: Option<RuntimeType>,
     },
 
-    /// 安装指定运行时版本（Windows 可自动下载安装；macOS/Linux 需手动安装后用 `use` 命令切换）
+    /// 安装指定运行时版本（Python: Windows 下载、Linux/macOS 采纳系统版本；Node: Windows/Linux x64/arm64 下载）
     ///
     /// 安装指定运行时的指定版本。安装行为因平台而异：
-    /// - Windows: 自动从官方源下载并安装
-    /// - macOS/Linux: 仅记录版本，需用户手动安装后使用 `use` 命令激活
+    /// - Python Windows: 自动从官方源下载并安装
+    /// - Python macOS/Linux: 采纳系统已安装的匹配版本
+    /// - Node.js Windows/Linux x64/arm64: 自动从官方源下载并安装
+    /// - 其他平台/架构: 需手动安装后使用 `use` 命令激活
     ///
     /// # 示例
     ///
@@ -328,7 +332,7 @@ pub struct PythonArgs {
 /// # 使用说明
 ///
 /// - `list`: 列出所有已安装的 Python 版本
-/// - `install`: 安装指定版本（Windows 可自动下载）
+/// - `install`: 安装/注册指定版本（Windows 可自动下载，Linux/macOS 采纳系统版本）
 /// - `use`: 切换全局 Python 版本（更新 shims）
 /// - `uninstall`: 卸载指定版本
 ///
@@ -352,7 +356,7 @@ pub enum PythonAction {
     /// 列出所有已安装的 Python 版本
     List,
 
-    /// 安装指定版本的 Python（Windows 可自动下载安装；macOS/Linux 需手动安装后用 'use' 命令切换）
+    /// 安装指定版本的 Python（Windows 可自动下载安装；macOS/Linux 采纳系统已安装版本）
     ///
     /// 安装 Python 到 MeetAI 管理目录。安装后版本会自动加入管理列表，
     /// 但不会自动设置为当前激活版本（需单独执行 `use`）。
@@ -364,7 +368,7 @@ pub enum PythonAction {
     /// # 平台差异
     ///
     /// - **Windows**: 从 python.org 下载安装包并自动执行安装
-    /// - **macOS/Linux**: 仅验证版本格式，实际安装需用户手动完成
+    /// - **macOS/Linux**: 不下载/编译 Python，采纳系统已安装的匹配版本
     ///
     /// # 示例
     ///
@@ -475,7 +479,7 @@ pub enum NodeAction {
     /// ```
     Available,
 
-    /// 安装指定版本的 Node.js（支持 latest / newest / lts / project；Windows 可自动下载安装）
+    /// 安装指定版本的 Node.js（支持 latest / newest / lts / project；Windows/Linux 可自动下载安装）
     ///
     /// 安装 Node.js 到 MeetAI 管理目录。支持特殊版本标识：
     /// - `latest`: 最新稳定版
@@ -485,8 +489,8 @@ pub enum NodeAction {
     ///
     /// # 平台差异
     ///
-    /// - **Windows**: 自动下载并安装
-    /// - **macOS/Linux**: 需手动安装后使用 `use` 命令
+    /// - **Windows/Linux x64/arm64**: 自动下载并安装
+    /// - **macOS/其他架构**: 需手动安装后使用 `use` 命令
     ///
     /// # 示例
     ///
@@ -797,9 +801,9 @@ pub struct QuickInstallArgs {
     #[arg(long, default_value = ".")]
     pub target_dir: PathBuf,
 
-    /// 是否安装 Node.js（自动安装目前仅支持 Windows）
+    /// 是否安装 Node.js（自动安装目前支持 Windows/Linux x64/arm64）
     ///
-    /// 是否同时安装 Node.js 运行时。当前仅 Windows 平台支持自动安装。
+    /// 是否同时安装 Node.js 运行时。当前支持 Windows/Linux x64/arm64 自动安装。
     #[arg(long, default_value_t = false, action = clap::ArgAction::Set)]
     pub install_nodejs: bool,
 

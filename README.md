@@ -216,7 +216,7 @@ meetai --help
 
 | 功能 | Python | Node.js | Java | Go |
 |------|--------|---------|------|----|
-| 安装指定版本 | ✅ | ✅ (Windows) | 🚧 | 🚧 |
+| 安装指定版本 | ✅ (Windows 下载；macOS/Linux 采纳系统版本) | ✅ (Windows/Linux x64/arm64 下载) | 🚧 | 🚧 |
 | 切换版本 | ✅ | ✅ | 🚧 | 🚧 |
 | 卸载版本 | ✅ | ✅ | 🚧 | 🚧 |
 | 列出已安装 | ✅ | ✅ | 🚧 | 🚧 |
@@ -237,8 +237,8 @@ meetai --help
 meetai runtime list                       # 查看运行时支持矩阵
 meetai runtime list python                # 查看已安装的 Python 版本
 meetai runtime list node                  # 查看已安装的 Node.js 版本
-meetai runtime install python latest      # 安装最新 Python（Windows 自动下载）
-meetai runtime install node lts           # 安装最新 LTS Node.js（Windows）
+meetai runtime install python latest      # 安装最新 Python（Windows 下载；macOS/Linux 采纳系统版本）
+meetai runtime install node lts           # 安装最新 LTS Node.js（Windows/Linux x64/arm64）
 meetai runtime use python 3.13.2          # 切换版本
 
 # 一键初始化（新手友好）
@@ -312,7 +312,7 @@ pip install -r requirements.txt
 ### 场景 3：同时需要 Python 和 Node.js
 
 ```powershell
-# 一键安装两者（Windows 会自动下载 Node.js）
+# 一键安装两者（Windows/Linux x64/arm64 会自动下载 Node.js）
 meetai quick-install --install-nodejs true
 
 # 分别切换到需要的版本
@@ -488,7 +488,7 @@ cargo run -- venv activate demo
 # 5. 验证 quick-install
 cargo run -- quick-install --create-venv false
 
-# 6. （可选）验证 Node.js（Windows）
+# 6. （可选）验证 Node.js（Windows/Linux x64/arm64）
 cargo run -- runtime install node lts
 cargo run -- runtime use node <version>
 cargo run -- runtime list node
@@ -515,9 +515,10 @@ cargo run -- runtime uninstall node <version>
 2. 查看详细日志：`meetai --verbose runtime install python 3.13.2`
 3. 检查代理或网络策略后重试
 4. 如果你在 macOS/Linux 上执行 `runtime install python latest` 或 `quick-install`：
-   - MeetAI 不会自动下载 Python
+   - MeetAI 不会自动下载或编译 Python
    - 若已存在 MeetAI 已管理版本，`latest` 会回退到本地最高版本
-   - 若没有已管理版本，请先手动安装后执行 `meetai runtime use python <version>`
+   - 若没有已管理版本，MeetAI 会尝试采纳系统 PATH 或常见系统目录中的 Python
+   - 若系统 Python 也不存在，请先用系统包管理器安装后执行 `meetai python install <version>`
 
 ---
 
@@ -636,5 +637,3 @@ MeetAI 会自动决定数据放在哪里，优先级如下：
 ## 许可证
 
 MIT License. 详见 [LICENSE](./LICENSE) 文件.
-
-
