@@ -18,8 +18,57 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  resolve-release-metadata:
+    name: resolve-release-metadata
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.release_tag != '' && inputs.release_tag || github.ref }}
+
+      - name: Resolve package version
+        id: meta
+        shell: bash
+        run: |
+          manual_tag="${{ inputs.release_tag }}"
+          cargo_version="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)"
+          if [[ -z "$cargo_version" ]]; then
+            echo "Unable to resolve package version from Cargo.toml" >&2
+            exit 1
+          fi
+          expected_tag="v$cargo_version"
+
+          if [[ -n "$manual_tag" ]]; then
+            version="$manual_tag"
+          elif [[ "${{ github.ref_type }}" == "tag" && -n "${{ github.ref_name }}" ]]; then
+            version="${{ github.ref_name }}"
+          else
+            echo "Release workflow must be triggered by a vX.Y.Z tag or workflow_dispatch release_tag." >&2
+            exit 1
+          fi
+
+          if [[ ! "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Release tag must use vX.Y.Z format, got: $version" >&2
+            exit 1
+          fi
+
+          if [[ "$version" != "$expected_tag" ]]; then
+            echo "Release tag does not match Cargo.toml version." >&2
+            echo "  tag:        $version" >&2
+            echo "  Cargo.toml: $expected_tag" >&2
+            exit 1
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
   windows-release:
     name: windows-release
+    needs: resolve-release-metadata
     runs-on: windows-latest
 
     steps:
@@ -50,30 +99,22 @@ jobs:
         id: meta
         shell: pwsh
         run: |
-          $manualTag = "${{ inputs.release_tag }}"
-
-          if ($manualTag -ne "") {
-            $version = $manualTag
-          } elseif ("${{ github.ref_type }}" -eq "tag" -and "${{ github.ref_name }}" -ne "") {
-            $version = "${{ github.ref_name }}"
-          } else {
-            $match = Select-String -Path Cargo.toml -Pattern '^version = "(.+)"$' | Select-Object -First 1
-            if (-not $match) {
-              throw "Unable to resolve package version from Cargo.toml"
-            }
-            $version = "v" + $match.Matches[0].Groups[1].Value
-          }
-
+          $version = "${{ needs.resolve-release-metadata.outputs.version }}"
           $package = "meetai-$version-windows-x86_64"
           $standaloneExe = "meetai.exe"
+          $standaloneExeSha = "$standaloneExe.sha256"
           $versionedExe = "$package.exe"
-          $zipSha = "$package.zip.sha256"
-          "version=$version" >> $env:GITHUB_OUTPUT
+          $versionedExeSha = "$versionedExe.sha256"
+          $archiveName = "$package.zip"
+          $archiveShaName = "$archiveName.sha256"
+
           "package=$package" >> $env:GITHUB_OUTPUT
-          "zip_name=$package.zip" >> $env:GITHUB_OUTPUT
-          "standalone_exe_name=$standaloneExe" >> $env:GITHUB_OUTPUT
-          "versioned_exe_name=$versionedExe" >> $env:GITHUB_OUTPUT
-          "zip_sha_name=$zipSha" >> $env:GITHUB_OUTPUT
+          "archive_name=$archiveName" >> $env:GITHUB_OUTPUT
+          "archive_sha_name=$archiveShaName" >> $env:GITHUB_OUTPUT
+          "standalone_bin_name=$standaloneExe" >> $env:GITHUB_OUTPUT
+          "standalone_bin_sha_name=$standaloneExeSha" >> $env:GITHUB_OUTPUT
+          "versioned_bin_name=$versionedExe" >> $env:GITHUB_OUTPUT
+          "versioned_bin_sha_name=$versionedExeSha" >> $env:GITHUB_OUTPUT
 
       - name: Package release files
         id: package
@@ -81,76 +122,45 @@ jobs:
         run: |
           $package = "${{ steps.meta.outputs.package }}"
           $stage = Join-Path $env:RUNNER_TEMP $package
-          $zipPath = Join-Path $env:GITHUB_WORKSPACE "${{ steps.meta.outputs.zip_name }}"
-          $zipShaPath = Join-Path $env:GITHUB_WORKSPACE "${{ steps.meta.outputs.zip_sha_name }}"
-          $standaloneExePath = Join-Path $env:GITHUB_WORKSPACE "${{ steps.meta.outputs.standalone_exe_name }}"
-          $versionedExePath = Join-Path $env:GITHUB_WORKSPACE "${{ steps.meta.outputs.versioned_exe_name }}"
+          $archivePath = Join-Path $env:GITHUB_WORKSPACE "${{ steps.meta.outputs.archive_name }}"
+          $archiveShaPath = Join-Path $env:GITHUB_WORKSPACE "${{ steps.meta.outputs.archive_sha_name }}"
+          $standaloneBinPath = Join-Path $env:GITHUB_WORKSPACE "${{ steps.meta.outputs.standalone_bin_name }}"
+          $standaloneBinShaPath = Join-Path $env:GITHUB_WORKSPACE "${{ steps.meta.outputs.standalone_bin_sha_name }}"
+          $versionedBinPath = Join-Path $env:GITHUB_WORKSPACE "${{ steps.meta.outputs.versioned_bin_name }}"
+          $versionedBinShaPath = Join-Path $env:GITHUB_WORKSPACE "${{ steps.meta.outputs.versioned_bin_sha_name }}"
 
           if (Test-Path $stage) {
             Remove-Item -LiteralPath $stage -Recurse -Force
           }
 
-          if (Test-Path $zipPath) {
-            Remove-Item -LiteralPath $zipPath -Force
-          }
-
-          if (Test-Path $zipShaPath) {
-            Remove-Item -LiteralPath $zipShaPath -Force
-          }
-
-          if (Test-Path $standaloneExePath) {
-            Remove-Item -LiteralPath $standaloneExePath -Force
-          }
-
-          if (Test-Path $versionedExePath) {
-            Remove-Item -LiteralPath $versionedExePath -Force
+          foreach ($path in @($archivePath, $archiveShaPath, $standaloneBinPath, $standaloneBinShaPath, $versionedBinPath, $versionedBinShaPath)) {
+            if (Test-Path $path) {
+              Remove-Item -LiteralPath $path -Force
+            }
           }
 
           New-Item -ItemType Directory -Path $stage | Out-Null
           Copy-Item -LiteralPath "target\release\meetai.exe" -Destination (Join-Path $stage "meetai.exe") -Force
           Copy-Item -LiteralPath "README.md" -Destination (Join-Path $stage "README.md") -Force
           Copy-Item -LiteralPath "LICENSE" -Destination (Join-Path $stage "LICENSE") -Force
-          Copy-Item -LiteralPath "target\release\meetai.exe" -Destination $standaloneExePath -Force
-          Copy-Item -LiteralPath "target\release\meetai.exe" -Destination $versionedExePath -Force
+          Copy-Item -LiteralPath "target\release\meetai.exe" -Destination $standaloneBinPath -Force
+          Copy-Item -LiteralPath "target\release\meetai.exe" -Destination $versionedBinPath -Force
 
-          Compress-Archive -Path $stage -DestinationPath $zipPath -CompressionLevel Optimal
+          Compress-Archive -Path $stage -DestinationPath $archivePath -CompressionLevel Optimal
 
-          $sha = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
-          Set-Content -LiteralPath $zipShaPath -Value ($sha + ' *' + [System.IO.Path]::GetFileName($zipPath)) -NoNewline
+          $sha = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
+          Set-Content -LiteralPath $archiveShaPath -Value ($sha + ' *' + [System.IO.Path]::GetFileName($archivePath)) -NoNewline
+          $standaloneSha = (Get-FileHash -LiteralPath $standaloneBinPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          Set-Content -LiteralPath $standaloneBinShaPath -Value ($standaloneSha + ' *' + [System.IO.Path]::GetFileName($standaloneBinPath)) -NoNewline
+          $versionedSha = (Get-FileHash -LiteralPath $versionedBinPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          Set-Content -LiteralPath $versionedBinShaPath -Value ($versionedSha + ' *' + [System.IO.Path]::GetFileName($versionedBinPath)) -NoNewline
 
-          "zip_path=$zipPath" >> $env:GITHUB_OUTPUT
-          "zip_sha_path=$zipShaPath" >> $env:GITHUB_OUTPUT
-          "standalone_exe_path=$standaloneExePath" >> $env:GITHUB_OUTPUT
-          "versioned_exe_path=$versionedExePath" >> $env:GITHUB_OUTPUT
-
-      - name: Resolve release notes
-        id: notes
-        shell: pwsh
-        run: |
-          $version = "${{ steps.meta.outputs.version }}"
-          $customNotes = Join-Path $env:GITHUB_WORKSPACE ".github\release-notes\$version.md"
-          $fallbackNotes = Join-Path $env:RUNNER_TEMP "release-notes-$version.md"
-
-          if (Test-Path $customNotes) {
-            $bodyPath = $customNotes
-          } else {
-            $fallbackBody = @(
-              "## 更新说明",
-              "",
-              "本次发布包含 Windows 可直接下载使用的 `meetai.exe`，以及包含说明文档的完整压缩包。",
-              "",
-              "## 下载内容",
-              "",
-              "- `meetai.exe`",
-              "- `${{ steps.meta.outputs.versioned_exe_name }}`",
-              "- `${{ steps.meta.outputs.zip_name }}`",
-              "- `${{ steps.meta.outputs.zip_sha_name }}`"
-            )
-            Set-Content -LiteralPath $fallbackNotes -Value $fallbackBody
-            $bodyPath = $fallbackNotes
-          }
-
-          "body_path=$bodyPath" >> $env:GITHUB_OUTPUT
+          "archive_path=$archivePath" >> $env:GITHUB_OUTPUT
+          "archive_sha_path=$archiveShaPath" >> $env:GITHUB_OUTPUT
+          "standalone_bin_path=$standaloneBinPath" >> $env:GITHUB_OUTPUT
+          "standalone_bin_sha_path=$standaloneBinShaPath" >> $env:GITHUB_OUTPUT
+          "versioned_bin_path=$versionedBinPath" >> $env:GITHUB_OUTPUT
+          "versioned_bin_sha_path=$versionedBinShaPath" >> $env:GITHUB_OUTPUT
 
       - name: Smoke test version output
         run: .\target\release\meetai.exe --version
@@ -160,21 +170,189 @@ jobs:
         with:
           name: ${{ steps.meta.outputs.package }}
           path: |
-            ${{ steps.package.outputs.standalone_exe_path }}
-            ${{ steps.package.outputs.versioned_exe_path }}
-            ${{ steps.package.outputs.zip_path }}
-            ${{ steps.package.outputs.zip_sha_path }}
+            ${{ steps.package.outputs.standalone_bin_path }}
+            ${{ steps.package.outputs.standalone_bin_sha_path }}
+            ${{ steps.package.outputs.versioned_bin_path }}
+            ${{ steps.package.outputs.versioned_bin_sha_path }}
+            ${{ steps.package.outputs.archive_path }}
+            ${{ steps.package.outputs.archive_sha_path }}
+
+  linux-release:
+    name: linux-release
+    needs: resolve-release-metadata
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.release_tag != '' && inputs.release_tag || github.ref }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Run tests
+        run: cargo test --locked
+
+      - name: Build release binary
+        run: cargo build --release --locked
+
+      - name: Resolve package metadata
+        id: meta
+        shell: bash
+        run: |
+          version="${{ needs.resolve-release-metadata.outputs.version }}"
+          package="meetai-${version}-linux-x86_64"
+          standalone_bin="meetai"
+          standalone_bin_sha="$standalone_bin.sha256"
+          versioned_bin="$package"
+          versioned_bin_sha="$versioned_bin.sha256"
+          archive_name="$package.tar.gz"
+          archive_sha_name="$archive_name.sha256"
+
+          echo "package=$package" >> "$GITHUB_OUTPUT"
+          echo "archive_name=$archive_name" >> "$GITHUB_OUTPUT"
+          echo "archive_sha_name=$archive_sha_name" >> "$GITHUB_OUTPUT"
+          echo "standalone_bin_name=$standalone_bin" >> "$GITHUB_OUTPUT"
+          echo "standalone_bin_sha_name=$standalone_bin_sha" >> "$GITHUB_OUTPUT"
+          echo "versioned_bin_name=$versioned_bin" >> "$GITHUB_OUTPUT"
+          echo "versioned_bin_sha_name=$versioned_bin_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Package release files
+        id: package
+        shell: bash
+        run: |
+          package="${{ steps.meta.outputs.package }}"
+          stage="$RUNNER_TEMP/$package"
+          archive_path="$GITHUB_WORKSPACE/${{ steps.meta.outputs.archive_name }}"
+          archive_sha_path="$GITHUB_WORKSPACE/${{ steps.meta.outputs.archive_sha_name }}"
+          standalone_bin_path="$GITHUB_WORKSPACE/${{ steps.meta.outputs.standalone_bin_name }}"
+          standalone_bin_sha_path="$GITHUB_WORKSPACE/${{ steps.meta.outputs.standalone_bin_sha_name }}"
+          versioned_bin_path="$GITHUB_WORKSPACE/${{ steps.meta.outputs.versioned_bin_name }}"
+          versioned_bin_sha_path="$GITHUB_WORKSPACE/${{ steps.meta.outputs.versioned_bin_sha_name }}"
+
+          rm -rf "$stage"
+          rm -f "$archive_path" "$archive_sha_path" "$standalone_bin_path" "$standalone_bin_sha_path" "$versioned_bin_path" "$versioned_bin_sha_path"
+
+          mkdir -p "$stage"
+          cp "target/release/meetai" "$stage/meetai"
+          chmod +x "$stage/meetai"
+          cp "README.md" "$stage/README.md"
+          cp "LICENSE" "$stage/LICENSE"
+
+          cp "target/release/meetai" "$standalone_bin_path"
+          chmod +x "$standalone_bin_path"
+          cp "target/release/meetai" "$versioned_bin_path"
+          chmod +x "$versioned_bin_path"
+
+          tar -C "$RUNNER_TEMP" -czf "$archive_path" "$package"
+
+          (
+            cd "$GITHUB_WORKSPACE"
+            sha256sum "${{ steps.meta.outputs.archive_name }}" > "${{ steps.meta.outputs.archive_sha_name }}"
+            sha256sum "${{ steps.meta.outputs.standalone_bin_name }}" > "${{ steps.meta.outputs.standalone_bin_sha_name }}"
+            sha256sum "${{ steps.meta.outputs.versioned_bin_name }}" > "${{ steps.meta.outputs.versioned_bin_sha_name }}"
+          )
+
+          echo "archive_path=$archive_path" >> "$GITHUB_OUTPUT"
+          echo "archive_sha_path=$archive_sha_path" >> "$GITHUB_OUTPUT"
+          echo "standalone_bin_path=$standalone_bin_path" >> "$GITHUB_OUTPUT"
+          echo "standalone_bin_sha_path=$standalone_bin_sha_path" >> "$GITHUB_OUTPUT"
+          echo "versioned_bin_path=$versioned_bin_path" >> "$GITHUB_OUTPUT"
+          echo "versioned_bin_sha_path=$versioned_bin_sha_path" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke test version output
+        run: ./target/release/meetai --version
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.meta.outputs.package }}
+          path: |
+            ${{ steps.package.outputs.standalone_bin_path }}
+            ${{ steps.package.outputs.standalone_bin_sha_path }}
+            ${{ steps.package.outputs.versioned_bin_path }}
+            ${{ steps.package.outputs.versioned_bin_sha_path }}
+            ${{ steps.package.outputs.archive_path }}
+            ${{ steps.package.outputs.archive_sha_path }}
+
+  publish-release:
+    name: publish-release
+    needs:
+      - resolve-release-metadata
+      - windows-release
+      - linux-release
+    if: (github.ref_type == 'tag' && startsWith(github.ref_name, 'v')) || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '' && startsWith(inputs.release_tag, 'v'))
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.release_tag != '' && inputs.release_tag || github.ref }}
+
+      - name: Download packaged assets
+        uses: actions/download-artifact@v4
+        with:
+          pattern: meetai-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Resolve release notes
+        id: notes
+        shell: bash
+        run: |
+          version="${{ needs.resolve-release-metadata.outputs.version }}"
+          custom_notes=".github/release-notes/${version}.md"
+          fallback_notes="$RUNNER_TEMP/release-notes-${version}.md"
+
+          if [[ -f "$custom_notes" ]]; then
+            body_path="$custom_notes"
+          else
+            cat > "$fallback_notes" <<EOF
+          ## 更新说明
+
+          本次发布包含 Windows 与 Linux x86_64 可直接下载使用的二进制，以及包含说明文档的压缩包。
+
+          ## 下载内容
+
+          - \`meetai.exe\`
+          - \`meetai.exe.sha256\`
+          - \`meetai-${version}-windows-x86_64.exe\`
+          - \`meetai-${version}-windows-x86_64.exe.sha256\`
+          - \`meetai-${version}-windows-x86_64.zip\`
+          - \`meetai-${version}-windows-x86_64.zip.sha256\`
+          - \`meetai\`
+          - \`meetai.sha256\`
+          - \`meetai-${version}-linux-x86_64\`
+          - \`meetai-${version}-linux-x86_64.sha256\`
+          - \`meetai-${version}-linux-x86_64.tar.gz\`
+          - \`meetai-${version}-linux-x86_64.tar.gz.sha256\`
+          EOF
+            body_path="$fallback_notes"
+          fi
+
+          echo "body_path=$body_path" >> "$GITHUB_OUTPUT"
+
+      - name: Show packaged assets
+        shell: bash
+        run: ls -l release-assets
 
       - name: Publish GitHub release
-        if: (github.ref_type == 'tag' && startsWith(github.ref_name, 'v')) || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '' && startsWith(inputs.release_tag, 'v'))
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.meta.outputs.version }}
-          name: MeetAI ${{ steps.meta.outputs.version }}
+          tag_name: ${{ needs.resolve-release-metadata.outputs.version }}
+          name: MeetAI ${{ needs.resolve-release-metadata.outputs.version }}
           body_path: ${{ steps.notes.outputs.body_path }}
           overwrite_files: true
-          files: |
-            ${{ steps.package.outputs.standalone_exe_path }}
-            ${{ steps.package.outputs.versioned_exe_path }}
-            ${{ steps.package.outputs.zip_path }}
-            ${{ steps.package.outputs.zip_sha_path }}
+          files: release-assets/*
