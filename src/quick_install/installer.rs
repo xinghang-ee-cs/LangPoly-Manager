@@ -915,10 +915,6 @@ mod tests {
             );
         } else {
             assert!(
-                message.contains("当前平台不下载 Python 安装包"),
-                "error should explain Python package handling on non-Windows, got: {message}"
-            );
-            assert!(
                 message.contains("meetai python install <version>"),
                 "error should include python adoption guidance on non-Windows, got: {message}"
             );

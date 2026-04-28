@@ -913,28 +913,18 @@ mod tests {
             new_dir.join("config.json"),
             b"{\"current_python_version\":null}",
         )?;
-        std::fs::write(
-            legacy_dir
-                .join("python")
-                .join("python-3.13.2")
-                .join(if cfg!(windows) {
-                    "python.exe"
-                } else {
-                    "bin/python"
-                }),
-            b"py3132",
-        )?;
-        std::fs::write(
-            legacy_dir
-                .join("python")
-                .join("python-3.14.3")
-                .join(if cfg!(windows) {
-                    "python.exe"
-                } else {
-                    "bin/python"
-                }),
-            b"py3143",
-        )?;
+        let legacy_py3132 =
+            Config::current_python_executable_for_version(&legacy_dir.join("python"), "3.13.2");
+        if let Some(parent) = legacy_py3132.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&legacy_py3132, b"py3132")?;
+        let legacy_py3143 =
+            Config::current_python_executable_for_version(&legacy_dir.join("python"), "3.14.3");
+        if let Some(parent) = legacy_py3143.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&legacy_py3143, b"py3143")?;
         std::fs::write(legacy_dir.join("config.json"), b"{\"legacy\":true}")?;
 
         let copied = Config::repair_existing_app_home_from_legacy_dir(&new_dir, &legacy_dir)?;
@@ -964,17 +954,14 @@ mod tests {
 
         std::fs::create_dir_all(&new_dir)?;
         std::fs::create_dir_all(unrelated_legacy.join("python").join("python-3.13.2"))?;
-        std::fs::write(
-            unrelated_legacy
-                .join("python")
-                .join("python-3.13.2")
-                .join(if cfg!(windows) {
-                    "python.exe"
-                } else {
-                    "bin/python"
-                }),
-            b"py3132",
-        )?;
+        let unrelated_python = Config::current_python_executable_for_version(
+            &unrelated_legacy.join("python"),
+            "3.13.2",
+        );
+        if let Some(parent) = unrelated_python.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&unrelated_python, b"py3132")?;
 
         Config::repair_existing_app_home_from_candidates_if_needed(
             &new_dir,

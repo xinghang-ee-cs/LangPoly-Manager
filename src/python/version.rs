@@ -672,11 +672,7 @@ mod tests {
         let manager: Box<dyn VersionManager> = Box::new(make_manager(temp.path())?);
 
         let install_dir = temp.path().join("python").join("python-3.13.2");
-        fs::create_dir_all(&install_dir)?;
-        fs::write(
-            PythonVersionManager::python_executable_in_dir(&install_dir),
-            b"fake-python",
-        )?;
+        create_fake_python_executable(&install_dir)?;
 
         let versions = manager.list_installed()?;
         assert_eq!(versions, vec!["3.13.2".to_string()]);
@@ -745,11 +741,7 @@ mod tests {
         let manager = make_manager(temp.path())?;
 
         let healthy_dir = temp.path().join("python").join("python-3.13.2");
-        fs::create_dir_all(&healthy_dir)?;
-        fs::write(
-            PythonVersionManager::python_executable_in_dir(&healthy_dir),
-            b"fake-python",
-        )?;
+        create_fake_python_executable(&healthy_dir)?;
 
         let partial_dir = temp.path().join("python").join("python-3.14.3");
         fs::create_dir_all(&partial_dir)?;

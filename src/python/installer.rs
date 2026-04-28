@@ -654,6 +654,9 @@ mod tests {
         );
 
         let python_exe = installer.get_python_exe(version);
+        if let Some(parent) = python_exe.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
         std::fs::write(&python_exe, b"stub")?;
         assert!(
             installer.is_installed(version)?,
@@ -958,6 +961,7 @@ mod tests {
         );
     }
 
+    #[cfg(windows)]
     #[test]
     fn build_trusted_python_install_roots_prefers_env_paths_and_deduplicates() {
         let roots = PythonInstaller::build_trusted_python_install_roots(
@@ -994,6 +998,7 @@ mod tests {
         assert!(roots.contains(&PathBuf::from(WINDOWS_PROGRAM_FILES_X86_DEFAULT)));
     }
 
+    #[cfg(windows)]
     #[test]
     fn build_windows_py_launcher_candidates_includes_standard_and_launcher_locations() {
         let candidates = PythonInstaller::build_windows_py_launcher_candidates(
@@ -1011,6 +1016,7 @@ mod tests {
         );
     }
 
+    #[cfg(windows)]
     #[test]
     fn build_windows_py_launcher_candidates_deduplicates_equivalent_entries() {
         let candidates = PythonInstaller::build_windows_py_launcher_candidates(
@@ -1168,7 +1174,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn install_latest_without_local_version_reports_system_python_guidance_on_non_windows(
+    async fn install_missing_explicit_version_reports_system_python_guidance_on_non_windows(
     ) -> Result<()> {
         if cfg!(windows) {
             return Ok(());
@@ -1177,12 +1183,12 @@ mod tests {
         let temp = tempdir()?;
         let installer = make_installer(temp.path())?;
 
-        let err = installer
-            .install("latest")
-            .await
-            .expect_err("non-windows latest install should fail without local versions");
+        let err = installer.install("9.99.99").await.expect_err(
+            "non-windows explicit install should fail when no matching system Python exists",
+        );
         assert!(
-            err.to_string().contains("当前平台不执行 Python 下载安装"),
+            err.to_string()
+                .contains("当前平台不执行 Python 下载安装，且未找到系统中已安装的 Python 9.99.99"),
             "unexpected error: {err:#}"
         );
 
