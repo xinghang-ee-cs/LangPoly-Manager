@@ -19,9 +19,11 @@ use meetai::cli::{Commands, MeetAiCli};
 /// - `runtime`: 统一运行时管理（Python/Node.js/Java/Go）
 /// - `python`: Python 版本管理
 /// - `node`: Node.js 版本管理
+/// - `npm`: Node.js 全局 npm 包管理
 /// - `pip`: Python 包管理
 /// - `venv`: 虚拟环境管理
 /// - `quick-install`: 一键安装并初始化环境
+/// - `update`: MeetAI 本体更新
 ///
 /// # 示例
 ///
@@ -35,6 +37,9 @@ use meetai::cli::{Commands, MeetAiCli};
 /// # 安装并使用 Python 3.11
 /// meetai python install 3.11.0
 /// meetai python use 3.11.0
+///
+/// # 检查 MeetAI 是否有新版本
+/// meetai update check
 /// ```
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -59,6 +64,9 @@ async fn main() -> Result<()> {
         Commands::Node(args) => {
             meetai::node::handle_node_command(args).await?;
         }
+        Commands::Npm(args) => {
+            meetai::npm::handle_npm_command(args).await?;
+        }
         Commands::Pip(args) => {
             meetai::pip::handle_pip_command(args).await?;
         }
@@ -67,6 +75,9 @@ async fn main() -> Result<()> {
         }
         Commands::QuickInstall(args) => {
             meetai::quick_install::handle_quick_install(args).await?;
+        }
+        Commands::Update(args) => {
+            meetai::update::handle_update_command(args).await?;
         }
     }
 

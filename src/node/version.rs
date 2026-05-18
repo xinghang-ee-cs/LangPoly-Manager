@@ -1,6 +1,8 @@
 //! Node.js 版本管理器实现。
 //!
 //! 本模块提供 Node.js 版本的检测、比较、安装目录管理和 shims 生成功能。
+//! Node.js 的 npm 全局包使用每个版本独立的 `npm-global` prefix，并通过
+//! shims 暴露全局包提供的 CLI。
 //! 核心类型包括：
 //! - `NodeVersion`: 表示单个 Node.js 版本，支持版本比较和显示
 //! - `NodeVersionManager`: 管理多个 Node.js 版本，负责版本切换、shims 维护和 PATH 配置
@@ -10,14 +12,15 @@
 //! 2. 版本比较：通过 `semver::Version` 实现语义化版本排序
 //! 3. 版本列表：扫描安装目录，返回所有已安装版本
 //! 4. 版本切换：通过 shims 目录和 PATH 配置实现当前版本激活
-//! 5. shims 管理：生成平台特定的 Node.js 启动脚本（Windows PowerShell / Unix shell）
-//! 6. PATH 检测：检查 shims 是否在 PATH 中，并提供修复指导
+//! 5. shims 管理：生成平台特定的 Node.js、npm、npx 和 npm 全局 CLI 启动脚本
+//! 6. npm 全局包隔离：为每个 Node.js 版本维护独立的 `npm-global` 目录
+//! 7. PATH 检测：检查 shims 是否在 PATH 中，并提供修复指导
 //!
 //! 与 Python 版本管理器的差异：
 //! - Node.js 版本号使用 `semver` 格式（`MAJOR.MINOR.PATCH`）
 //! - 支持 `v` 前缀（如 `v18.17.0`），自动规范化
 //! - 可执行文件名固定为 `node`（而非 `python`）
-//! - 额外管理 `npm` 和 `npx` 命令的 shims
+//! - 额外管理 `npm`、`npx` 和 npm 全局包 CLI 的 shims
 //!
 //! 目录结构：
 //! ```text
@@ -28,12 +31,14 @@
 //! │   │   │   ├── node
 //! │   │   │   ├── npm
 //! │   │   │   └── npx
+//! │   │   └── npm-global/ # 当前 Node.js 版本的 npm 全局包 prefix
 //! │   │   └── node.exe   # Windows
 //! │   └── v20.5.0/
 //! └── shims/             # 版本选择器脚本
 //!     ├── node           # 指向当前版本的 shim
 //!     ├── npm            # 指向当前版本 npm 的 shim
-//!     └── npx            # 指向当前版本 npx 的 shim
+//!     ├── npx            # 指向当前版本 npx 的 shim
+//!     └── eslint         # npm 全局包 CLI shim 示例
 //! ```
 //!
 //! 平台差异：
@@ -219,6 +224,109 @@ impl NodeVersionManager {
         Ok(node_exe)
     }
 
+    pub fn install_dir_for_version(&self, version: &str) -> Result<PathBuf> {
+        let normalized = Self::normalize_version_token(version)
+            .with_context(|| format!("Node.js 版本号格式不正确：{}", version))?;
+        let versions = self.list_installed()?;
+        let target = versions
+            .iter()
+            .find(|item| item.version.to_string() == normalized)
+            .with_context(|| {
+                format!(
+                    "找不到已安装的 Node.js {} 版本，请先执行: meetai node list",
+                    version
+                )
+            })?;
+        Ok(target.path.clone())
+    }
+
+    pub fn current_install_dir(&self, missing_selection_message: &'static str) -> Result<PathBuf> {
+        let current_version = self
+            .get_current_version()?
+            .context(missing_selection_message)?;
+        self.install_dir_for_version(&current_version)
+    }
+
+    pub fn current_npm_executable(
+        &self,
+        missing_selection_message: &'static str,
+    ) -> Result<PathBuf> {
+        let install_dir = self.current_install_dir(missing_selection_message)?;
+        let npm_exe = Self::npm_executable_for_install_dir(&install_dir);
+        if !npm_exe.exists() {
+            anyhow::bail!("当前 npm 可执行文件不存在：{}", npm_exe.display());
+        }
+        Ok(npm_exe)
+    }
+
+    pub fn npm_executable_for_install_dir(install_dir: &Path) -> PathBuf {
+        Self::npm_executable_in_dir(install_dir)
+    }
+
+    pub fn npm_global_prefix_for_install_dir(install_dir: &Path) -> PathBuf {
+        install_dir.join("npm-global")
+    }
+
+    pub fn npm_global_bin_for_prefix(prefix: &Path) -> PathBuf {
+        if cfg!(windows) {
+            prefix.to_path_buf()
+        } else {
+            prefix.join("bin")
+        }
+    }
+
+    pub fn ensure_current_npm_global_dirs(
+        &self,
+        missing_selection_message: &'static str,
+    ) -> Result<PathBuf> {
+        let prefix = Self::npm_global_prefix_for_install_dir(
+            &self.current_install_dir(missing_selection_message)?,
+        );
+        fs::create_dir_all(Self::npm_global_bin_for_prefix(&prefix))
+            .with_context(|| format!("创建 npm 全局 bin 目录失败：{}", prefix.display()))?;
+        Ok(prefix)
+    }
+
+    pub fn refresh_current_global_cli_shims(&self) -> Result<()> {
+        let install_dir = self
+            .current_install_dir("还没有选择 Node.js 版本，请先执行: meetai node use <version>")?;
+        let prefix = Self::npm_global_prefix_for_install_dir(&install_dir);
+        let bin_dir = Self::npm_global_bin_for_prefix(&prefix);
+        let shims_dir = self.shims_dir()?;
+        fs::create_dir_all(&shims_dir)
+            .with_context(|| format!("创建 shims 目录失败：{}", shims_dir.display()))?;
+
+        Self::remove_generated_npm_cli_shims(&shims_dir)?;
+        if !bin_dir.exists() {
+            return Ok(());
+        }
+
+        for entry in fs::read_dir(&bin_dir)
+            .with_context(|| format!("读取 npm 全局 bin 目录失败：{}", bin_dir.display()))?
+        {
+            let entry = entry?;
+            let path = entry.path();
+            if !path.is_file() || !Self::is_npm_global_cli_candidate(&path) {
+                continue;
+            }
+
+            let Some(command_name) = Self::npm_global_cli_shim_name(&path) else {
+                continue;
+            };
+            if Self::is_reserved_shim_name(&command_name) {
+                continue;
+            }
+
+            if cfg!(windows) {
+                Self::write_windows_npm_global_cli_shim(&shims_dir, &command_name, &path)?;
+            } else {
+                Self::write_unix_npm_global_cli_shim(&shims_dir, &command_name, &path)?;
+            }
+        }
+
+        Ok(())
+    }
+
     /// 卸载指定 Node.js 版本。
     pub fn uninstall(&self, version: &str) -> Result<()> {
         let normalized = Self::normalize_version_token(version)
@@ -346,6 +454,15 @@ impl NodeVersionManager {
         let shims_dir = self.shims_dir()?;
         fs::create_dir_all(&shims_dir)
             .with_context(|| format!("创建 shims 目录失败：{}", shims_dir.display()))?;
+        let install_dir = if cfg!(windows) {
+            npm_exe.parent().unwrap_or_else(|| Path::new("."))
+        } else {
+            npm_exe
+                .parent()
+                .and_then(Path::parent)
+                .unwrap_or_else(|| Path::new("."))
+        };
+        let npm_prefix = Self::npm_global_prefix_for_install_dir(install_dir);
 
         if cfg!(windows) {
             Self::write_windows_executable_shim(
@@ -357,23 +474,21 @@ impl NodeVersionManager {
                 "meetai node use <version>",
                 false,
             )?;
-            Self::write_windows_executable_shim(
+            Self::write_windows_npm_shim(
                 &shims_dir,
                 "npm.cmd",
                 "MEETAI_NPM_EXE",
                 npm_exe,
-                "npm",
-                "meetai node use <version>",
+                &npm_prefix,
                 true,
             )?;
-            Self::write_windows_executable_shim(
+            Self::write_windows_npm_shim(
                 &shims_dir,
                 "npx.cmd",
                 "MEETAI_NPX_EXE",
                 npx_exe,
-                "npx",
-                "meetai node use <version>",
-                true,
+                &npm_prefix,
+                false,
             )?;
         } else {
             Self::write_unix_executable_shim(
@@ -384,21 +499,21 @@ impl NodeVersionManager {
                 "Node.js",
                 "meetai node use <version>",
             )?;
-            Self::write_unix_executable_shim(
+            Self::write_unix_npm_shim(
                 &shims_dir,
                 "npm",
                 "MEETAI_NPM_EXE",
                 npm_exe,
-                "npm",
-                "meetai node use <version>",
+                &npm_prefix,
+                true,
             )?;
-            Self::write_unix_executable_shim(
+            Self::write_unix_npm_shim(
                 &shims_dir,
                 "npx",
                 "MEETAI_NPX_EXE",
                 npx_exe,
-                "npx",
-                "meetai node use <version>",
+                &npm_prefix,
+                false,
             )?;
         }
 
@@ -407,6 +522,7 @@ impl NodeVersionManager {
 
     fn remove_node_shims(&self) -> Result<()> {
         let shims_dir = self.shims_dir()?;
+        Self::remove_generated_npm_cli_shims(&shims_dir)?;
         let names = if cfg!(windows) {
             vec!["node.cmd", "npm.cmd", "npx.cmd"]
         } else {
@@ -422,6 +538,72 @@ impl NodeVersionManager {
         }
 
         Ok(())
+    }
+
+    fn remove_generated_npm_cli_shims(shims_dir: &Path) -> Result<()> {
+        if !shims_dir.exists() {
+            return Ok(());
+        }
+
+        for entry in fs::read_dir(shims_dir)
+            .with_context(|| format!("读取 shims 目录失败：{}", shims_dir.display()))?
+        {
+            let entry = entry?;
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            let Ok(content) = fs::read_to_string(&path) else {
+                continue;
+            };
+            if content.contains(Self::npm_global_cli_shim_marker()) {
+                fs::remove_file(&path)
+                    .with_context(|| format!("删除 npm 全局包 shim 失败：{}", path.display()))?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn is_npm_global_cli_candidate(path: &Path) -> bool {
+        if cfg!(windows) {
+            path.extension()
+                .and_then(|ext| ext.to_str())
+                .map(|ext| ext.eq_ignore_ascii_case("cmd") || ext.eq_ignore_ascii_case("exe"))
+                .unwrap_or(false)
+        } else {
+            true
+        }
+    }
+
+    fn npm_global_cli_shim_name(path: &Path) -> Option<String> {
+        let file_name = path.file_name()?.to_str()?;
+        if cfg!(windows) {
+            if file_name.to_ascii_lowercase().ends_with(".cmd") {
+                return Some(file_name.to_string());
+            }
+            if file_name.to_ascii_lowercase().ends_with(".exe") {
+                let stem = path.file_stem()?.to_str()?;
+                return Some(format!("{stem}.cmd"));
+            }
+        }
+        Some(file_name.to_string())
+    }
+
+    fn is_reserved_shim_name(name: &str) -> bool {
+        let normalized = if cfg!(windows) {
+            name.strip_suffix(".cmd").unwrap_or(name)
+        } else {
+            name
+        };
+        matches!(
+            normalized.to_ascii_lowercase().as_str(),
+            "node" | "npm" | "npx" | "meetai"
+        )
+    }
+
+    fn npm_global_cli_shim_marker() -> &'static str {
+        "Generated by MeetAI npm global CLI shim refresh"
     }
 
     fn write_windows_executable_shim(
@@ -456,6 +638,51 @@ impl NodeVersionManager {
         Ok(())
     }
 
+    fn write_windows_npm_shim(
+        shims_dir: &Path,
+        shim_name: &str,
+        env_var: &str,
+        executable: &Path,
+        prefix: &Path,
+        refresh_after_global_change: bool,
+    ) -> Result<()> {
+        let executable_str = executable.display().to_string();
+        let prefix_str = prefix.display().to_string();
+        let refresh = if refresh_after_global_change {
+            "\r\nset \"MEETAI_NPM_ACTION=%~1\"\r\nif /I \"%MEETAI_NPM_ACTION%\"==\"install\" meetai npm refresh-shims >NUL 2>NUL\r\nif /I \"%MEETAI_NPM_ACTION%\"==\"uninstall\" meetai npm refresh-shims >NUL 2>NUL\r\nif /I \"%MEETAI_NPM_ACTION%\"==\"update\" meetai npm refresh-shims >NUL 2>NUL\r\nif /I \"%MEETAI_NPM_ACTION%\"==\"upgrade\" meetai npm refresh-shims >NUL 2>NUL"
+        } else {
+            ""
+        };
+        let script = format!(
+            "@echo off\r\nset \"{env_var}={exe}\"\r\nset \"NPM_CONFIG_PREFIX={prefix}\"\r\nset \"npm_config_prefix={prefix}\"\r\nif not exist \"%{env_var}%\" (\r\n  >&2 echo [meetai] 当前 npm 可执行文件不存在: %{env_var}%\r\n  >&2 echo [meetai] 请先执行: meetai node use ^<version^>\r\n  exit /b 1\r\n)\r\ncall \"%{env_var}%\" %*\r\nset \"MEETAI_NPM_EXIT=%ERRORLEVEL%\"{refresh}\r\nexit /b %MEETAI_NPM_EXIT%\r\n",
+            env_var = env_var,
+            exe = executable_str,
+            prefix = prefix_str,
+            refresh = refresh
+        );
+        let shim_path = shims_dir.join(shim_name);
+        fs::write(&shim_path, script)
+            .with_context(|| format!("写入 npm shim 失败：{}", shim_path.display()))?;
+        Ok(())
+    }
+
+    fn write_windows_npm_global_cli_shim(
+        shims_dir: &Path,
+        shim_name: &str,
+        executable: &Path,
+    ) -> Result<()> {
+        let executable_str = executable.display().to_string();
+        let script = format!(
+            "@echo off\r\nrem {marker}\r\nset \"MEETAI_NPM_GLOBAL_CLI={exe}\"\r\nif not exist \"%MEETAI_NPM_GLOBAL_CLI%\" (\r\n  >&2 echo [meetai] npm 全局命令不存在: %MEETAI_NPM_GLOBAL_CLI%\r\n  >&2 echo [meetai] 请执行: meetai npm refresh-shims\r\n  exit /b 1\r\n)\r\ncall \"%MEETAI_NPM_GLOBAL_CLI%\" %*\r\nexit /b %ERRORLEVEL%\r\n",
+            marker = Self::npm_global_cli_shim_marker(),
+            exe = executable_str
+        );
+        let shim_path = shims_dir.join(shim_name);
+        fs::write(&shim_path, script)
+            .with_context(|| format!("写入 npm 全局包 shim 失败：{}", shim_path.display()))?;
+        Ok(())
+    }
+
     fn write_unix_executable_shim(
         shims_dir: &Path,
         shim_name: &str,
@@ -476,6 +703,71 @@ impl NodeVersionManager {
         let shim_path = shims_dir.join(shim_name);
         fs::write(&shim_path, script)
             .with_context(|| format!("写入 shim 失败：{}", shim_path.display()))?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = fs::metadata(&shim_path)?.permissions();
+            perms.set_mode(0o755);
+            fs::set_permissions(&shim_path, perms)
+                .with_context(|| format!("设置 shim 执行权限失败：{}", shim_path.display()))?;
+        }
+
+        Ok(())
+    }
+
+    fn write_unix_npm_global_cli_shim(
+        shims_dir: &Path,
+        shim_name: &str,
+        executable: &Path,
+    ) -> Result<()> {
+        let escaped = Self::escape_sh_single_quotes(&executable.display().to_string());
+        let script = format!(
+            "#!/usr/bin/env sh\n# {marker}\nMEETAI_NPM_GLOBAL_CLI='{executable}'\nif [ ! -x \"$MEETAI_NPM_GLOBAL_CLI\" ]; then\n  echo \"[meetai] npm 全局命令不存在: $MEETAI_NPM_GLOBAL_CLI\" >&2\n  echo \"[meetai] 请执行: meetai npm refresh-shims\" >&2\n  exit 1\nfi\nexec \"$MEETAI_NPM_GLOBAL_CLI\" \"$@\"\n",
+            marker = Self::npm_global_cli_shim_marker(),
+            executable = escaped
+        );
+        let shim_path = shims_dir.join(shim_name);
+        fs::write(&shim_path, script)
+            .with_context(|| format!("写入 npm 全局包 shim 失败：{}", shim_path.display()))?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = fs::metadata(&shim_path)?.permissions();
+            perms.set_mode(0o755);
+            fs::set_permissions(&shim_path, perms)
+                .with_context(|| format!("设置 shim 执行权限失败：{}", shim_path.display()))?;
+        }
+
+        Ok(())
+    }
+
+    fn write_unix_npm_shim(
+        shims_dir: &Path,
+        shim_name: &str,
+        env_var: &str,
+        executable: &Path,
+        prefix: &Path,
+        refresh_after_global_change: bool,
+    ) -> Result<()> {
+        let escaped = Self::escape_sh_single_quotes(&executable.display().to_string());
+        let escaped_prefix = Self::escape_sh_single_quotes(&prefix.display().to_string());
+        let refresh = if refresh_after_global_change {
+            "\ncase \"${1:-}\" in install|uninstall|update|upgrade) meetai npm refresh-shims >/dev/null 2>/dev/null || true ;; esac"
+        } else {
+            ""
+        };
+        let script = format!(
+            "#!/usr/bin/env sh\n{env_var}='{executable}'\nexport NPM_CONFIG_PREFIX='{prefix}'\nexport npm_config_prefix='{prefix}'\nif [ ! -x \"${env_var}\" ]; then\n  echo \"[meetai] 当前 npm 可执行文件不存在: ${env_var}\" >&2\n  echo \"[meetai] 请先执行: meetai node use <version>\" >&2\n  exit 1\nfi\n\"${env_var}\" \"$@\"\nstatus=$?{refresh}\nexit $status\n",
+            env_var = env_var,
+            executable = escaped,
+            prefix = escaped_prefix,
+            refresh = refresh
+        );
+        let shim_path = shims_dir.join(shim_name);
+        fs::write(&shim_path, script)
+            .with_context(|| format!("写入 npm shim 失败：{}", shim_path.display()))?;
 
         #[cfg(unix)]
         {
@@ -728,6 +1020,61 @@ mod tests {
         assert!(script.contains(">&2 echo [meetai] 当前 Node.js 可执行文件不存在"));
         assert!(script.contains(">&2 echo [meetai] 请先执行: meetai node use ^<version^>"));
         assert!(!script.contains(" 1>&2"));
+    }
+
+    #[test]
+    fn refresh_current_global_cli_shims_generates_and_removes_npm_cli_shims() -> anyhow::Result<()>
+    {
+        let temp = tempdir()?;
+        let manager = make_manager(temp.path())?;
+        let install_dir = temp.path().join("nodejs").join("versions").join("v20.11.1");
+        let bin_dir = if cfg!(windows) {
+            install_dir.clone()
+        } else {
+            install_dir.join("bin")
+        };
+        fs::create_dir_all(&bin_dir)?;
+
+        let node_exe = if cfg!(windows) {
+            install_dir.join("node.exe")
+        } else {
+            bin_dir.join("node")
+        };
+        fs::write(&node_exe, b"node")?;
+        if !cfg!(windows) {
+            let npm = bin_dir.join("npm");
+            fs::write(&npm, b"npm")?;
+            let npx = bin_dir.join("npx");
+            fs::write(&npx, b"npx")?;
+        }
+
+        fs::write(manager.current_version_file()?, "20.11.1")?;
+        let prefix = NodeVersionManager::npm_global_prefix_for_install_dir(&install_dir);
+        let global_bin = NodeVersionManager::npm_global_bin_for_prefix(&prefix);
+        fs::create_dir_all(&global_bin)?;
+        let cli_name = if cfg!(windows) {
+            "eslint.cmd"
+        } else {
+            "eslint"
+        };
+        fs::write(global_bin.join(cli_name), b"eslint")?;
+
+        manager.refresh_current_global_cli_shims()?;
+        let shim_name = if cfg!(windows) {
+            "eslint.cmd"
+        } else {
+            "eslint"
+        };
+        let shim_path = manager.shims_dir()?.join(shim_name);
+        assert!(shim_path.exists());
+        assert!(fs::read_to_string(&shim_path)?
+            .contains(NodeVersionManager::npm_global_cli_shim_marker()));
+
+        fs::remove_file(global_bin.join(cli_name))?;
+        manager.refresh_current_global_cli_shims()?;
+        assert!(!shim_path.exists());
+
+        Ok(())
     }
 
     #[tokio::test]

@@ -16,9 +16,11 @@
 //!   runtime     统一运行时管理（Python/Node.js/Java/Go）
 //!   python      Python 版本管理
 //!   node        Node.js 版本管理
+//!   npm         Node.js 全局 npm 包管理
 //!   pip         Python 包管理
 //!   venv        虚拟环境管理
 //!   quick-install 一键安装并初始化环境
+//!   update      MeetAI 本体更新
 //! ```
 //!
 //! # 使用示例
@@ -40,6 +42,12 @@
 //!
 //! # 安装 Node.js LTS 版本
 //! meetai node install lts
+//!
+//! # 管理当前 Node.js 版本下的全局 npm 包
+//! meetai npm install eslint
+//!
+//! # 检查 MeetAI 更新
+//! meetai update check
 //! ```
 //!
 
@@ -115,6 +123,10 @@ pub enum Commands {
     #[command(name = "node")]
     Node(NodeArgs),
 
+    /// npm 全局包生命周期管理
+    #[command(name = "npm")]
+    Npm(NpmArgs),
+
     /// Pip 包管理
     ///
     /// 在当前激活的 Python 环境下管理包，支持安装、卸载、升级和列表查询。
@@ -136,6 +148,10 @@ pub enum Commands {
     /// 适合新机器快速搭建开发环境。
     #[command(name = "quick-install")]
     QuickInstall(QuickInstallArgs),
+
+    /// 检查并更新 MeetAI 本体
+    #[command(name = "update")]
+    Update(UpdateArgs),
 }
 
 /// 受支持的运行时类型枚举。
@@ -660,6 +676,47 @@ pub enum PipAction {
     List,
 }
 
+#[derive(Parser, Debug)]
+pub struct NpmArgs {
+    #[command(subcommand)]
+    pub action: NpmAction,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum NpmAction {
+    /// 安装当前 Node.js 版本下的全局 npm 包
+    Install { package: String },
+    /// 卸载当前 Node.js 版本下的全局 npm 包
+    Uninstall { package: String },
+    /// 升级当前 Node.js 版本下的全局 npm 包
+    Upgrade { package: String },
+    /// 列出当前 Node.js 版本下的顶层全局 npm 包
+    List,
+    /// 显示当前 Node.js 版本的 npm 全局 prefix
+    Prefix,
+    /// 将一个 Node.js 版本的顶层全局 npm 包显式迁移到另一个版本
+    Migrate {
+        #[arg(long)]
+        from: String,
+        #[arg(long)]
+        to: String,
+    },
+    #[command(hide = true)]
+    RefreshShims,
+}
+
+#[derive(Parser, Debug)]
+pub struct UpdateArgs {
+    #[command(subcommand)]
+    pub action: Option<UpdateAction>,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum UpdateAction {
+    /// 只检查是否有新版本
+    Check,
+}
+
 /// 虚拟环境管理参数。
 ///
 /// `venv` 子命令的顶层参数，包含一个 `VenvAction` 指定具体操作。
@@ -1000,6 +1057,59 @@ mod tests {
 
         let NodeAction::Available = args.action else {
             panic!("expected node available action");
+        };
+    }
+
+    #[test]
+    fn npm_install_parses() {
+        let cli = parse_cli(&["meetai", "npm", "install", "eslint"]);
+        let Commands::Npm(args) = cli.command else {
+            panic!("expected npm command");
+        };
+
+        let NpmAction::Install { package } = args.action else {
+            panic!("expected npm install action");
+        };
+
+        assert_eq!(package, "eslint");
+    }
+
+    #[test]
+    fn npm_migrate_parses() {
+        let cli = parse_cli(&[
+            "meetai", "npm", "migrate", "--from", "20.11.1", "--to", "22.0.0",
+        ]);
+        let Commands::Npm(args) = cli.command else {
+            panic!("expected npm command");
+        };
+
+        let NpmAction::Migrate { from, to } = args.action else {
+            panic!("expected npm migrate action");
+        };
+
+        assert_eq!(from, "20.11.1");
+        assert_eq!(to, "22.0.0");
+    }
+
+    #[test]
+    fn update_defaults_to_full_update() {
+        let cli = parse_cli(&["meetai", "update"]);
+        let Commands::Update(args) = cli.command else {
+            panic!("expected update command");
+        };
+
+        assert!(args.action.is_none());
+    }
+
+    #[test]
+    fn update_check_parses() {
+        let cli = parse_cli(&["meetai", "update", "check"]);
+        let Commands::Update(args) = cli.command else {
+            panic!("expected update command");
+        };
+
+        let Some(UpdateAction::Check) = args.action else {
+            panic!("expected update check action");
         };
     }
 }

@@ -10,9 +10,11 @@
 //! - `config`: 应用配置持久化与目录管理
 //! - `python`: Python 安装、版本管理与虚拟环境
 //! - `node`: Node.js 版本管理与项目集成
+//! - `npm`: 当前 Node.js 版本下的全局 npm 包管理
 //! - `pip`: Python 包管理
 //! - `runtime`: 统一运行时抽象与命令分发
 //! - `quick_install`: 一键环境初始化流程
+//! - `update`: MeetAI 本体更新
 //! - `utils`: 共享工具（下载器、执行器、验证器等）
 //!
 //! # 架构设计
@@ -40,6 +42,8 @@ pub mod cli;
 pub mod config;
 /// Node.js install and version management.
 pub mod node;
+/// npm global package lifecycle management.
+pub mod npm;
 /// Pip package and version management.
 pub mod pip;
 /// Python install, version, and venv management.
@@ -48,5 +52,7 @@ pub mod python;
 pub mod quick_install;
 /// Unified runtime command handlers.
 pub mod runtime;
+/// Self-update commands.
+pub mod update;
 /// Shared utilities (downloader, executor, progress, validator).
 pub mod utils;
