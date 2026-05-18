@@ -11,9 +11,11 @@
 | [runtime](#runtime-统一运行时管理) | 统一管理所有运行时（推荐） | ⭐⭐⭐ |
 | [python](#python-python-管理) | Python 专项管理 | ⭐⭐⭐ |
 | [node](#node-nodejs-管理) | Node.js 专项管理 | ⭐⭐⭐ |
+| [npm](#npm-全局包管理) | 当前 Node.js 版本下的全局 npm 包管理 | ⭐⭐ |
 | [pip](#pip-包管理) | Python 包管理 | ⭐⭐⭐ |
 | [venv](#venv-虚拟环境管理) | 虚拟环境管理 | ⭐⭐ |
 | [quick-install](#quick-install-一键初始化) | 一键初始化环境 | ⭐⭐ |
+| [update](#update-meetai-本体更新) | 检查并更新 MeetAI 本体 | ⭐⭐ |
 
 ---
 
@@ -179,6 +181,47 @@ meetai pip list                        # 列出所有已安装包
 
 ---
 
+## `npm` 全局包管理
+
+> ⚠️ 需要先用 `meetai node use <version>` 选择 Node.js 版本。每个 Node.js 版本都有独立的 `npm-global` 空间，避免全局包互相污染。
+
+### 安装包
+
+```powershell
+meetai npm install eslint
+```
+
+安装后 MeetAI 会刷新 shims，让全局包提供的 CLI 可以跟随当前 Node.js 版本使用。
+
+### 卸载包
+
+```powershell
+meetai npm uninstall eslint
+```
+
+### 升级包
+
+```powershell
+meetai npm upgrade eslint
+```
+
+### 查看
+
+```powershell
+meetai npm list                        # 列出当前 Node.js 版本的顶层全局 npm 包
+meetai npm prefix                      # 显示当前 Node.js 版本的 npm 全局 prefix
+```
+
+### 迁移全局包
+
+```powershell
+meetai npm migrate --from 20.11.1 --to 22.0.0
+```
+
+该命令会读取来源版本的顶层全局 npm 包，并在目标版本中重新安装。
+
+---
+
 ## `venv` 虚拟环境管理
 
 > ⚠️ 只有 `meetai venv create ...` 需要先用 `meetai python use <version>` 选择 Python 版本；`venv list` 和 `venv activate` 不需要。
@@ -258,6 +301,26 @@ meetai quick-install --auto-activate false
 
 ---
 
+## `update` MeetAI 本体更新
+
+### 检查更新
+
+```powershell
+meetai update check
+```
+
+### 自动更新
+
+```powershell
+meetai update
+```
+
+自动更新会从 GitHub Releases 下载当前平台对应的二进制和 `.sha256` 文件，校验通过后替换当前可执行文件。目前支持 Windows x86_64 与 Linux x86_64。
+
+如果 Windows 上当前 `meetai.exe` 正在运行导致无法立即覆盖，MeetAI 会准备一个延迟替换脚本，并在命令输出中提示后续操作。
+
+---
+
 ## 常见场景示例
 
 ### 场景 1：全新学习 Python
@@ -280,6 +343,14 @@ pip install -r requirements.txt
 
 ```powershell
 meetai quick-install --install-nodejs true
+```
+
+### 场景 3.1：安装 Node.js 全局工具
+
+```powershell
+meetai node use 20.11.1
+meetai npm install eslint
+meetai npm list
 ```
 
 ### 场景 4：创建项目虚拟环境
@@ -306,15 +377,20 @@ meetai python use 3.11.0  # 切换
 1. **让命令自动跟随版本**
    - 运行 `meetai python use ...` 或 `meetai node use ...` 时，MeetAI 会在需要时自动尝试把 shims 写入用户 PATH
    - 如果自动配置失败，或新终端里仍未生效，再按 [README](./README.md) 手动把 shims 目录加入 PATH
-   - `python`、`pip`、`node`、`npm`、`npx` 会自动使用当前版本
+   - `python`、`pip`、`node`、`npm`、`npx` 和 npm 全局包 CLI 会自动使用当前版本
 
 2. **查看详细日志**
    - 加 `-v` 选项：`meetai -v runtime install python 3.13.2`
 
-3. **平台差异**
+3. **升级 MeetAI**
+   - 先检查：`meetai update check`
+   - 确认后更新：`meetai update`
+
+4. **平台差异**
    - Python Windows：支持自动下载安装
    - Python macOS/Linux：不下载或编译 Python，会采纳系统已安装版本
    - Node.js Windows/Linux x64/arm64：支持自动下载安装
+   - MeetAI 自动更新：支持 Windows x86_64 与 Linux x86_64
    - 其他平台/架构：需手动安装后用 `use` 切换
 
 ---
